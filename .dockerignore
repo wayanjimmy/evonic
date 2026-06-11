@@ -22,7 +22,6 @@ artifacts/
 # Docs and tests (not needed in image)
 docs/
 unit_tests/
-evaluator/
 test_definitions/
 
 # Local dev files
