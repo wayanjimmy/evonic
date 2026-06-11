@@ -1,0 +1,48 @@
+# Build artifacts
+.venv/
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Git
+.git/
+.github/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+
+# Logs and runtime state (volume-mounted)
+logs/
+shared/
+data/
+artifacts/
+
+# Docs and tests (not needed in image)
+docs/
+unit_tests/
+evaluator/
+test_definitions/
+
+# Local dev files
+.env
+.env.example
+*.bak*
+*.bak
+compare_*.py
+full_compare.py
+lab.py
+list_runs.py
+evonic_backup_guide.md
+mood-card*.*
+mood-card.svg
+DeepSeek_V4.*
+plan/
+patches/
+
+# Docker-in-Docker tooling (we're the container)
+docker/
+
+# Supervisor (not used in container mode)
+supervisor/
