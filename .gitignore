@@ -304,6 +304,7 @@ run/
 .windsurfrules
 .codeium/
 .codeiumignore
+.pi/
 AGENTS.md
 CLAUDE.md
 **/evonic
