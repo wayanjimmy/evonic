@@ -29,11 +29,13 @@ class SettingsMixin:
             cursor.execute("SELECT value FROM app_settings WHERE key = ?", (key,))
             row = cursor.fetchone()
 
-        # Fall back to default when the row is missing OR stored as NULL;
-        # otherwise a NULL value poisons the cache and later calls (even with a
-        # default) return None, breaking callers like int(get_setting(...)).
+        # Fall back to default when the row is missing OR stored as NULL.
+        # Do NOT cache None: a NULL / default-less read would otherwise poison the
+        # cache, so later calls (even with a real default) return None and break
+        # callers like int(get_setting(key, default)).
         value = row[0] if (row and row[0] is not None) else default
-        self._settings_cache[key] = value
+        if value is not None:
+            self._settings_cache[key] = value
         return value
 
     def get_settings_by_prefix(self, prefix: str) -> dict:
