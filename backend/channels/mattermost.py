@@ -439,6 +439,13 @@ class MattermostChannel(BaseChannel):
         mm_channel_id, root_id = target
         chunks = list(_split_message(text))
         progress_post_id = self._progress_posts.pop(external_user_id, None)
+        if not progress_post_id and root_id:
+            try:
+                from models.db import db
+                row = db.get_mattermost_thread(self.channel_id, mm_channel_id, root_id)
+                progress_post_id = (row or {}).get('progress_post_id')
+            except Exception:
+                progress_post_id = None
         if progress_post_id:
             self._discard_progress_post(progress_post_id, mm_channel_id, root_id)
         for chunk in chunks:
@@ -535,7 +542,6 @@ class MattermostChannel(BaseChannel):
             'llm_thinking': '• Calling model…',
             'tool_call_started': '• Running tool…',
             'tool_executed': '• Reviewing tool results…',
-            'turn_complete': '• Preparing response…',
         }
 
         def _on_progress(data):
@@ -601,7 +607,7 @@ class MattermostChannel(BaseChannel):
         if not self._progress_handler:
             return
         from backend.event_stream import event_stream
-        for event_name in ('turn_begin', 'llm_thinking', 'tool_call_started', 'tool_executed', 'turn_complete'):
+        for event_name in ('turn_begin', 'llm_thinking', 'tool_call_started', 'tool_executed'):
             event_stream.off(event_name, self._progress_handler)
         self._progress_handler = None
         if self._approval_required_handler:
