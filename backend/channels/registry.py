@@ -8,6 +8,7 @@ from backend.channels.telegram import TelegramChannel
 from backend.channels.whatsapp import WhatsAppChannel
 from backend.channels.whatsapp_shared import SharedWhatsAppChannel
 from backend.channels.discord import DiscordChannel
+from backend.channels.mattermost import MattermostChannel
 from models.db import db
 
 _logger = logging.getLogger(__name__)
@@ -18,6 +19,7 @@ CHANNEL_TYPES: Dict[str, Type[BaseChannel]] = {
     'whatsapp': WhatsAppChannel,
     'whatsapp_shared': SharedWhatsAppChannel,
     'discord': DiscordChannel,
+    'mattermost': MattermostChannel,
 }
 
 # Channel types backed by a Baileys sidecar that binds a local bridge port.
