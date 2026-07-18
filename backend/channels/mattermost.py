@@ -9,6 +9,7 @@ import time
 import base64
 import secrets
 from typing import Any, Dict, Optional, Tuple
+from urllib.parse import urlparse
 
 import requests
 
@@ -133,17 +134,38 @@ class MattermostChannel(BaseChannel):
             self._thread.join(timeout=10)
 
     def _request(self, method: str, path: str, **kwargs):
-        url = path if path.startswith('http') else self.base_url + path
-        for attempt in range(3):
-            resp = self._http.request(method, url, timeout=kwargs.pop('timeout', 20), **kwargs)
+        url = self._resolve_request_url(path)
+        timeout = kwargs.pop('timeout', 20)
+        method_upper = method.upper()
+        max_attempts = 3 if method_upper in {'GET', 'HEAD', 'OPTIONS'} else 1
+        resp = None
+        for attempt in range(max_attempts):
+            resp = self._http.request(method, url, timeout=timeout, **kwargs)
             if resp.status_code < 500:
                 resp.raise_for_status()
-                return resp.json() if resp.content else {}
-            if method.upper() == 'POST':
+                if not resp.content or not resp.content.strip():
+                    return {}
+                content_type = resp.headers.get('content-type', '')
+                if 'json' in content_type.lower():
+                    return resp.json()
+                try:
+                    return resp.json()
+                except ValueError:
+                    return {}
+            if attempt == max_attempts - 1:
                 break
             time.sleep(0.5 * (2 ** attempt))
         resp.raise_for_status()
         return {}
+
+    def _resolve_request_url(self, path: str) -> str:
+        if not path.startswith(('http://', 'https://')):
+            return self.base_url + path
+        base = urlparse(self.base_url)
+        target = urlparse(path)
+        if (target.scheme, target.netloc) != (base.scheme, base.netloc):
+            raise ValueError("Mattermost request URL must match configured base_url origin")
+        return path
 
     def _websocket_loop(self):
         try:
@@ -209,7 +231,14 @@ class MattermostChannel(BaseChannel):
             if raw_code:
                 pending = db.get_pending_approval_by_code(raw_code)
                 if pending:
-                    if not pending.get('external_user_id'):
+                    pending_user_id = pending.get('external_user_id') or ''
+                    if pending.get('channel_id') != self.channel_id:
+                        self._post(mm_channel_id, "❌ That pairing code is not valid for this channel.", root_id=root_id if root_id else None)
+                        return
+                    if pending_user_id and pending_user_id != user_id:
+                        self._post(mm_channel_id, "❌ That pairing code is not valid for this account.", root_id=root_id if root_id else None)
+                        return
+                    if not pending_user_id:
                         db.update_pending_user_id(pending['id'], user_id)
                     db.approve_pending_with_name_needed(pending['id'])
                     self._post(mm_channel_id, "✅ You're now approved! Welcome aboard.", root_id=root_id if root_id else None)
@@ -235,14 +264,14 @@ class MattermostChannel(BaseChannel):
         )
         if info_lines:
             text = "\n".join(info_lines) + (f"\n{text}" if text else '')
+        if not text and (image_url or video_url):
+            text = '[Image]' if image_url else '[Video]'
+        elif not text and (post.get('metadata') or {}).get('files'):
+            text = '[Attachment]'
         if not db.is_session_bot_enabled(session_id, agent_id=self.agent_id):
             if text:
                 db.add_chat_message(session_id, 'user', text, agent_id=self.agent_id)
             return
-        if not text and (image_url or video_url):
-            text = '[Image]' if image_url else '[Video]'
-        elif not text and post.get('metadata', {}).get('files'):
-            text = '[Attachment]'
         if not text:
             return
 

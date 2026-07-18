@@ -208,3 +208,102 @@ def test_start_persists_random_action_token(monkeypatch):
     assert saved['action_token']
     assert saved['action_token'] != chan.channel_id
     chan.stop()
+
+
+def test_request_preserves_timeout_restricts_origin_and_retries_get_only(monkeypatch):
+    from models.db import db
+    chan = _make_channel(db)
+    calls = []
+    sleeps = []
+
+    class Resp:
+        def __init__(self, status, body=b'{"ok": true}', headers=None):
+            self.status_code = status
+            self.content = body
+            self.headers = headers or {'content-type': 'application/json'}
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise RuntimeError(f'status {self.status_code}')
+
+        def json(self):
+            return {'ok': True}
+
+    def fake_request(method, url, timeout=None, **kwargs):
+        calls.append((method, url, timeout))
+        return Resp(500 if len(calls) < 3 else 200)
+
+    monkeypatch.setattr(chan._http, 'request', fake_request)
+    monkeypatch.setattr('backend.channels.mattermost.time.sleep', lambda seconds: sleeps.append(seconds))
+    assert chan._request('GET', '/api/v4/test', timeout=7) == {'ok': True}
+    assert [c[2] for c in calls] == [7, 7, 7]
+    assert sleeps == [0.5, 1.0]
+
+    calls.clear()
+    try:
+        chan._request('GET', 'https://evil.example/api/v4/test')
+        assert False, 'cross-origin absolute URL should fail'
+    except ValueError:
+        pass
+
+    chan._request('GET', 'https://mm.example/api/v4/test')
+    assert calls[-1][1] == 'https://mm.example/api/v4/test'
+
+    calls.clear()
+    monkeypatch.setattr(chan._http, 'request', lambda method, url, timeout=None, **kwargs: calls.append((method, url, timeout)) or Resp(500))
+    try:
+        chan._request('PATCH', '/api/v4/posts/p1/patch')
+        assert False, '5xx should raise'
+    except RuntimeError:
+        pass
+    assert len(calls) == 1
+
+
+def test_pair_code_bound_to_other_user_rejected():
+    from models.db import db
+    chan = _make_channel(db, mode='restricted')
+    pair_code = db._generate_pair_code()
+    db.create_pending_approval(chan.channel_id, 'other-user', 'Other', pair_code, '2999-01-01T00:00:00')
+
+    chan._handle_post(
+        {'id': 'p1', 'user_id': 'user1', 'channel_id': 'c1', 'message': pair_code},
+        {'channel_type': 'D'},
+    )
+    assert not db.is_user_allowed(chan.channel_id, 'user1')
+    assert any('not valid for this account' in s['message'] for s in chan.sent)
+
+
+def test_pair_code_for_other_channel_rejected():
+    from models.db import db
+    chan = _make_channel(db, mode='restricted')
+    other_chan_id = db.create_channel({
+        'agent_id': chan.agent_id,
+        'type': 'mattermost',
+        'name': 'Other Mattermost',
+        'config': {'mode': 'restricted'},
+    })
+    pair_code = db._generate_pair_code()
+    db.create_pending_approval(other_chan_id, 'user1', 'User', pair_code, '2999-01-01T00:00:00')
+
+    chan._handle_post(
+        {'id': 'p1', 'user_id': 'user1', 'channel_id': 'c1', 'message': pair_code},
+        {'channel_type': 'D'},
+    )
+    assert not db.is_user_allowed(chan.channel_id, 'user1')
+    assert any('not valid for this channel' in s['message'] for s in chan.sent)
+
+
+def test_disabled_bot_persists_attachment_only_placeholder(monkeypatch):
+    from models.db import db
+    chan = _make_channel(db)
+    monkeypatch.setattr(chan, '_ingest_attachments', lambda *args, **kwargs: (None, None, []))
+    session_id = db.get_or_create_session(chan.agent_id, 'mm:dm:c1', chan.channel_id, 'mattermost')
+    db.set_session_bot_enabled(session_id, False, agent_id=chan.agent_id)
+
+    chan._handle_post(
+        {'id': 'p1', 'user_id': 'user1', 'channel_id': 'c1', 'message': '', 'metadata': {'files': [{'id': 'f1'}]}},
+        {'channel_type': 'D'},
+    )
+    messages = db.get_session_messages(session_id)
+    assert messages[-1]['role'] == 'user'
+    assert messages[-1]['content'] == '[Attachment]'
