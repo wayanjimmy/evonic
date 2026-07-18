@@ -10,6 +10,7 @@ class SettingsMixin:
     # load) don't hit the DB. Invalidated automatically on write.
     # ---------------------------------------------------------------
     _settings_cache: dict = {}
+    _MISSING = object()
 
     @classmethod
     def invalidate_settings_cache(cls, key: str = None):
@@ -22,7 +23,8 @@ class SettingsMixin:
     def get_setting(self, key: str, default: str = None) -> Optional[str]:
         """Get an app-level setting by key. Cached in-memory after first read."""
         if key in self._settings_cache:
-            return self._settings_cache[key]
+            cached = self._settings_cache[key]
+            return default if cached is self._MISSING else cached
 
         with self._connect() as conn:
             cursor = conn.cursor()
@@ -34,6 +36,7 @@ class SettingsMixin:
         # fallback would make get_setting(key, "a") poison later calls like
         # get_setting(key, "b") or get_setting(key).
         if not row or row[0] is None:
+            self._settings_cache[key] = self._MISSING
             return default
         self._settings_cache[key] = row[0]
         return row[0]

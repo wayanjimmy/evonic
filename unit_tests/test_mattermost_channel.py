@@ -1,5 +1,9 @@
 """Tests for the Mattermost channel implementation."""
 
+import uuid
+
+import requests
+
 from backend.channels.mattermost import (
     MattermostChannel,
     _split_message,
@@ -38,7 +42,7 @@ def test_split_message_hard_cut_on_unbreakable_text():
 
 
 def _make_channel(db, mode='open'):
-    agent_id = 'mm_agent'
+    agent_id = f'mm_agent_{uuid.uuid4().hex}'
     db.create_agent({'id': agent_id, 'name': 'Mattermost Agent', 'system_prompt': ''})
     chan_id = db.create_channel({
         'agent_id': agent_id,
@@ -221,6 +225,10 @@ def test_request_preserves_timeout_restricts_origin_and_retries_get_only(monkeyp
             self.status_code = status
             self.content = body
             self.headers = headers or {'content-type': 'application/json'}
+            self.closed = False
+
+        def close(self):
+            self.closed = True
 
         def raise_for_status(self):
             if self.status_code >= 400:
@@ -231,12 +239,16 @@ def test_request_preserves_timeout_restricts_origin_and_retries_get_only(monkeyp
 
     def fake_request(method, url, timeout=None, **kwargs):
         calls.append((method, url, timeout))
-        return Resp(500 if len(calls) < 3 else 200)
+        resp = Resp(500 if len(calls) < 3 else 200)
+        calls[-1] = (method, url, timeout, resp)
+        return resp
 
     monkeypatch.setattr(chan._http, 'request', fake_request)
     monkeypatch.setattr('backend.channels.mattermost.time.sleep', lambda seconds: sleeps.append(seconds))
     assert chan._request('GET', '/api/v4/test', timeout=7) == {'ok': True}
     assert [c[2] for c in calls] == [7, 7, 7]
+    assert calls[0][3].closed is True
+    assert calls[1][3].closed is True
     assert sleeps == [0.5, 1.0]
 
     calls.clear()
@@ -257,6 +269,44 @@ def test_request_preserves_timeout_restricts_origin_and_retries_get_only(monkeyp
     except RuntimeError:
         pass
     assert len(calls) == 1
+
+
+def test_request_retries_get_transport_errors_and_rejects_non_json(monkeypatch):
+    from models.db import db
+    chan = _make_channel(db)
+    calls = []
+
+    class Resp:
+        status_code = 200
+        content = b'plain text'
+        headers = {'content-type': 'text/plain'}
+
+        def raise_for_status(self):
+            pass
+
+    def flaky(method, url, timeout=None, **kwargs):
+        calls.append(method)
+        if len(calls) == 1:
+            raise requests.Timeout('timeout')
+        return Resp()
+
+    monkeypatch.setattr(chan._http, 'request', flaky)
+    monkeypatch.setattr('backend.channels.mattermost.time.sleep', lambda seconds: None)
+    try:
+        chan._request('GET', '/api/v4/test')
+        assert False, 'non-json success should fail clearly'
+    except ValueError as exc:
+        assert 'non-JSON' in str(exc)
+    assert calls == ['GET', 'GET']
+
+    calls.clear()
+    monkeypatch.setattr(chan._http, 'request', lambda method, url, timeout=None, **kwargs: calls.append(method) or (_ for _ in ()).throw(requests.ConnectionError('down')))
+    try:
+        chan._request('POST', '/api/v4/posts')
+        assert False, 'POST transport error should fail without retry'
+    except requests.ConnectionError:
+        pass
+    assert calls == ['POST']
 
 
 def test_pair_code_bound_to_other_user_rejected():
@@ -307,3 +357,32 @@ def test_disabled_bot_persists_attachment_only_placeholder(monkeypatch):
     messages = db.get_session_messages(session_id)
     assert messages[-1]['role'] == 'user'
     assert messages[-1]['content'] == '[Attachment]'
+
+
+def test_duplicate_post_id_processed_once(monkeypatch):
+    from models.db import db
+    import backend.agent_runtime as runtime_module
+
+    fake_runtime = _FakeRuntime()
+    monkeypatch.setattr(runtime_module, 'agent_runtime', fake_runtime)
+    chan = _make_channel(db)
+    post = {'id': 'dup1', 'user_id': 'user1', 'channel_id': 'c1', 'message': 'hi'}
+    chan._handle_post(dict(post), {'channel_type': 'D'})
+    chan._handle_post(dict(post), {'channel_type': 'D'})
+    assert len(fake_runtime.calls) == 1
+    assert len(chan.sent) == 1
+
+
+def test_post_validates_file_ids(monkeypatch):
+    from models.db import db
+    chan = _make_channel(db)
+    payloads = []
+    monkeypatch.setattr(chan, '_request', lambda method, path, **kwargs: payloads.append(kwargs['json']) or {'id': 'p1'})
+
+    MattermostChannel._post(chan, 'c1', 'file', file_ids=(str(i) for i in [1, 2]))
+    assert payloads[-1]['file_ids'] == ['1', '2']
+    try:
+        MattermostChannel._post(chan, 'c1', 'file', file_ids='abc')
+        assert False, 'string file_ids should be rejected'
+    except ValueError:
+        pass

@@ -8,7 +8,8 @@ import threading
 import time
 import base64
 import secrets
-from typing import Any, Dict, Optional, Tuple
+from collections import deque
+from typing import Any, Dict, Optional, Sequence, Tuple
 from urllib.parse import urlparse
 
 import requests
@@ -76,6 +77,9 @@ class MattermostChannel(BaseChannel):
         self._approval_required_handler = None
         self._approval_resolved_handler = None
         self._pending_approval_posts: Dict[str, str] = {}
+        self._processed_post_ids = deque(maxlen=2000)
+        self._processed_post_id_set = set()
+        self._processed_lock = threading.Lock()
 
     @staticmethod
     def get_channel_type() -> str:
@@ -139,23 +143,38 @@ class MattermostChannel(BaseChannel):
         method_upper = method.upper()
         max_attempts = 3 if method_upper in {'GET', 'HEAD', 'OPTIONS'} else 1
         resp = None
+        last_exc = None
         for attempt in range(max_attempts):
-            resp = self._http.request(method, url, timeout=timeout, **kwargs)
+            try:
+                resp = self._http.request(method, url, timeout=timeout, **kwargs)
+            except requests.RequestException as exc:
+                last_exc = exc
+                if attempt == max_attempts - 1:
+                    raise
+                time.sleep(0.5 * (2 ** attempt))
+                continue
             if resp.status_code < 500:
                 resp.raise_for_status()
                 if not resp.content or not resp.content.strip():
                     return {}
                 content_type = resp.headers.get('content-type', '')
-                if 'json' in content_type.lower():
-                    return resp.json()
+                if 'json' not in content_type.lower():
+                    raise ValueError(f"Mattermost API returned non-JSON response: {content_type or 'unknown content type'}")
                 try:
                     return resp.json()
                 except ValueError:
-                    return {}
+                    raise ValueError("Mattermost API returned invalid JSON")
             if attempt == max_attempts - 1:
                 break
+            try:
+                resp.close()
+            except Exception:
+                pass
             time.sleep(0.5 * (2 ** attempt))
-        resp.raise_for_status()
+        if resp is not None:
+            resp.raise_for_status()
+        if last_exc is not None:
+            raise last_exc
         return {}
 
     def _resolve_request_url(self, path: str) -> str:
@@ -210,6 +229,9 @@ class MattermostChannel(BaseChannel):
         from models.db import db
         from backend.channels.pairing import extract_pair_code
 
+        post_id = post.get('id') or ''
+        if post_id and not self._mark_post_processing(post_id):
+            return
         user_id = post.get('user_id') or ''
         if not user_id or user_id == self.bot_user_id:
             return
@@ -229,19 +251,15 @@ class MattermostChannel(BaseChannel):
         if not db.is_user_allowed(self.channel_id, user_id):
             raw_code = extract_pair_code(text) if text else None
             if raw_code:
-                pending = db.get_pending_approval_by_code(raw_code)
-                if pending:
-                    pending_user_id = pending.get('external_user_id') or ''
-                    if pending.get('channel_id') != self.channel_id:
-                        self._post(mm_channel_id, "❌ That pairing code is not valid for this channel.", root_id=root_id if root_id else None)
-                        return
-                    if pending_user_id and pending_user_id != user_id:
-                        self._post(mm_channel_id, "❌ That pairing code is not valid for this account.", root_id=root_id if root_id else None)
-                        return
-                    if not pending_user_id:
-                        db.update_pending_user_id(pending['id'], user_id)
-                    db.approve_pending_with_name_needed(pending['id'])
+                claim = db.claim_and_approve_pending_for_user(raw_code, self.channel_id, user_id)
+                if claim == 'approved':
                     self._post(mm_channel_id, "✅ You're now approved! Welcome aboard.", root_id=root_id if root_id else None)
+                    return
+                if claim == 'wrong_channel':
+                    self._post(mm_channel_id, "❌ That pairing code is not valid for this channel.", root_id=root_id if root_id else None)
+                    return
+                if claim == 'wrong_user':
+                    self._post(mm_channel_id, "❌ That pairing code is not valid for this account.", root_id=root_id if root_id else None)
                     return
             allowed, pair_code = self._check_allowlist(user_id, user_name)
             if not allowed and pair_code:
@@ -285,6 +303,17 @@ class MattermostChannel(BaseChannel):
         response = result.get('response') or ''
         if response and response != '(No response)':
             self._do_send(external_key, response)
+
+    def _mark_post_processing(self, post_id: str) -> bool:
+        with self._processed_lock:
+            if post_id in self._processed_post_id_set:
+                return False
+            if len(self._processed_post_ids) == self._processed_post_ids.maxlen:
+                old = self._processed_post_ids[0]
+                self._processed_post_id_set.discard(old)
+            self._processed_post_ids.append(post_id)
+            self._processed_post_id_set.add(post_id)
+            return True
 
     def _ingest_attachments(self, post, agent_id, session_id, external_key,
                             channel_id, db):
@@ -387,12 +416,15 @@ class MattermostChannel(BaseChannel):
         except Exception:
             return ''
 
-    def _post(self, mm_channel_id: str, message: str, root_id: Optional[str] = None, file_ids=None):
+    def _post(self, mm_channel_id: str, message: str, root_id: Optional[str] = None,
+              file_ids: Optional[Sequence[str]] = None):
         payload = {'channel_id': mm_channel_id, 'message': message or ''}
         if root_id:
             payload['root_id'] = root_id
-        if file_ids:
-            payload['file_ids'] = file_ids
+        if file_ids is not None:
+            if isinstance(file_ids, (str, bytes)):
+                raise ValueError("file_ids must be a sequence of file id strings, not a string")
+            payload['file_ids'] = [str(file_id) for file_id in file_ids]
         return self._request('POST', '/api/v4/posts', json=payload)
 
     def _do_send(self, external_user_id: str, text: str):
