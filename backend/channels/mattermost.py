@@ -439,12 +439,8 @@ class MattermostChannel(BaseChannel):
         mm_channel_id, root_id = target
         chunks = list(_split_message(text))
         progress_post_id = self._progress_posts.pop(external_user_id, None)
-        if progress_post_id and chunks:
-            try:
-                self._request('PUT', f'/api/v4/posts/{progress_post_id}/patch', json={'message': chunks[0]})
-                chunks = chunks[1:]
-            except Exception:
-                pass
+        if progress_post_id:
+            self._discard_progress_post(progress_post_id, mm_channel_id, root_id)
         for chunk in chunks:
             self._post(mm_channel_id, chunk, root_id=root_id or None)
         from backend.event_stream import event_stream
@@ -452,6 +448,29 @@ class MattermostChannel(BaseChannel):
             'channel_type': 'mattermost', 'channel_id': self.channel_id,
             'external_user_id': external_user_id, 'message': text,
         })
+
+    def _discard_progress_post(self, progress_post_id: str, mm_channel_id: str,
+                               root_id: str) -> None:
+        """Remove progress placeholder before posting the final answer.
+
+        Mattermost marks patched posts as Edited and keeps their original thread
+        position. Reusing a progress post as the final answer can therefore make
+        the next answer appear as an edit of an earlier bot message. Use a fresh
+        final reply instead and delete the placeholder best-effort.
+        """
+        try:
+            self._request('DELETE', f'/api/v4/posts/{progress_post_id}')
+        except Exception:
+            try:
+                self._request('PUT', f'/api/v4/posts/{progress_post_id}/patch', json={'message': '✅ Done'})
+            except Exception:
+                pass
+        if root_id:
+            try:
+                from models.db import db
+                db.set_mattermost_thread_progress_post(self.channel_id, mm_channel_id, root_id, None)
+            except Exception:
+                pass
 
     def _do_send_file(self, external_user_id: str, file_path: str,
                       caption: Optional[str] = None, mime_type: Optional[str] = None) -> bool:

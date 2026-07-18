@@ -157,17 +157,17 @@ def test_approval_action_resolves(monkeypatch):
     assert response['update']['message'] == 'Approved by user.'
 
 
-def test_progress_post_persisted_and_final_patches_existing(monkeypatch):
+def test_progress_post_persisted_and_final_posts_fresh_reply(monkeypatch):
     from models.db import db
     chan = _make_channel(db)
     db.upsert_mattermost_thread(chan.channel_id, chan.agent_id, 'c1', 'root1', 'user1')
     chan._reply_roots['mm:thread:c1:root1'] = ('c1', 'root1')
-    patches = []
+    deletes = []
     original_request = chan._request
 
     def fake_request(method, path, **kwargs):
-        if method == 'PUT':
-            patches.append((path, kwargs.get('json')))
+        if method == 'DELETE':
+            deletes.append(path)
             return {}
         return original_request(method, path, **kwargs)
 
@@ -178,7 +178,10 @@ def test_progress_post_persisted_and_final_patches_existing(monkeypatch):
     assert row['progress_post_id'] == 'post-1'
 
     chan._do_send('mm:thread:c1:root1', 'final answer')
-    assert patches[-1] == ('/api/v4/posts/post-1/patch', {'message': 'final answer'})
+    assert deletes == ['/api/v4/posts/post-1']
+    row = db.get_mattermost_thread(chan.channel_id, 'c1', 'root1')
+    assert row['progress_post_id'] is None
+    assert chan.sent[-1]['message'] == 'final answer'
 
 
 def test_attachment_download_and_persistence(tmp_path, monkeypatch):
