@@ -136,6 +136,58 @@ class ChannelMixin:
             conn.commit()
             return cursor.rowcount > 0
 
+    # ==================== Mattermost Thread State Methods ====================
+
+    def upsert_mattermost_thread(self, evonic_channel_id: str, agent_id: str,
+                                 mattermost_channel_id: str, root_post_id: str,
+                                 started_by_user_id: str,
+                                 progress_post_id: Optional[str] = None) -> str:
+        record_id = f"{evonic_channel_id}:{mattermost_channel_id}:{root_post_id}"
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO mattermost_threads
+                    (id, evonic_channel_id, agent_id, mattermost_channel_id,
+                     root_post_id, started_by_user_id, progress_post_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(evonic_channel_id, mattermost_channel_id, root_post_id)
+                DO UPDATE SET
+                    agent_id = excluded.agent_id,
+                    started_by_user_id = COALESCE(started_by_user_id, excluded.started_by_user_id),
+                    progress_post_id = COALESCE(excluded.progress_post_id, progress_post_id),
+                    updated_at = CURRENT_TIMESTAMP
+            """, (record_id, evonic_channel_id, agent_id, mattermost_channel_id,
+                  root_post_id, started_by_user_id, progress_post_id))
+            conn.commit()
+        return record_id
+
+    def get_mattermost_thread(self, evonic_channel_id: str,
+                              mattermost_channel_id: str,
+                              root_post_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM mattermost_threads
+                WHERE evonic_channel_id = ? AND mattermost_channel_id = ? AND root_post_id = ?
+            """, (evonic_channel_id, mattermost_channel_id, root_post_id))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def set_mattermost_thread_progress_post(self, evonic_channel_id: str,
+                                            mattermost_channel_id: str,
+                                            root_post_id: str,
+                                            progress_post_id: Optional[str]) -> bool:
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE mattermost_threads
+                SET progress_post_id = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE evonic_channel_id = ? AND mattermost_channel_id = ? AND root_post_id = ?
+            """, (progress_post_id, evonic_channel_id, mattermost_channel_id, root_post_id))
+            conn.commit()
+            return cursor.rowcount > 0
+
     # ==================== Shared-Channel Inbox Methods ====================
 
     _INBOX_MAX_PER_CHANNEL = 100
@@ -173,18 +225,6 @@ class ChannelMixin:
                     ORDER BY last_seen DESC LIMIT ?)
             """, (channel_id, channel_id, self._INBOX_MAX_PER_CHANNEL))
             conn.commit()
-
-    def cleanup_expired_inbox_entries(self, retention_hours: int) -> int:
-        """Remove unassigned senders inactive longer than ``retention_hours``."""
-        with self._connect() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "DELETE FROM shared_channel_inbox "
-                "WHERE last_seen < datetime('now', ?)",
-                (f'-{retention_hours} hours',),
-            )
-            conn.commit()
-            return cursor.rowcount
 
     def get_inbox(self, channel_id: str) -> List[Dict[str, Any]]:
         with self._connect() as conn:
@@ -267,6 +307,67 @@ class ChannelMixin:
             )
             conn.commit()
             return cursor.rowcount > 0
+
+    def claim_and_approve_pending_for_user(self, pair_code: str, channel_id: str,
+                                           external_user_id: str) -> str:
+        """Atomically claim a pair code for a user and approve it.
+
+        Returns one of: approved, invalid_code, wrong_channel, wrong_user,
+        missing_channel.
+        """
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("BEGIN IMMEDIATE")
+            cursor.execute("""\
+                SELECT id, channel_id, external_user_id, user_name, pair_code, created_at, expires_at
+                FROM channel_pending_approvals
+                WHERE pair_code = ? AND expires_at > CURRENT_TIMESTAMP
+            """, (pair_code,))
+            pending = cursor.fetchone()
+            if not pending:
+                conn.rollback()
+                return 'invalid_code'
+            if pending['channel_id'] != channel_id:
+                conn.rollback()
+                return 'wrong_channel'
+            bound_user = pending['external_user_id'] or ''
+            if bound_user and bound_user != external_user_id:
+                conn.rollback()
+                return 'wrong_user'
+            if not bound_user:
+                cursor.execute("""
+                    UPDATE channel_pending_approvals SET external_user_id = ?
+                    WHERE id = ? AND (external_user_id IS NULL OR external_user_id = '')
+                """, (external_user_id, pending['id']))
+                if cursor.rowcount != 1:
+                    cursor.execute("SELECT external_user_id FROM channel_pending_approvals WHERE id = ?", (pending['id'],))
+                    row = cursor.fetchone()
+                    if not row or row['external_user_id'] != external_user_id:
+                        conn.rollback()
+                        return 'wrong_user'
+            cursor.execute("SELECT id, agent_id, type, name, config, enabled, created_at, updated_at FROM channels WHERE id = ?", (channel_id,))
+            channel = cursor.fetchone()
+            if not channel:
+                conn.rollback()
+                return 'missing_channel'
+            config = json.loads(channel['config']) if channel['config'] else {}
+            allowed = config.get('allowed_users', [])
+            if external_user_id not in allowed:
+                allowed.append(external_user_id)
+            config['allowed_users'] = allowed
+            pending_user_name = (pending['user_name'] or '').strip()
+            if pending_user_name:
+                user_names = config.get('user_names', {})
+                user_names.setdefault(external_user_id, pending_user_name)
+                config['user_names'] = user_names
+            cursor.execute(
+                "UPDATE channels SET config = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (json.dumps(config), channel_id)
+            )
+            cursor.execute("DELETE FROM channel_pending_approvals WHERE id = ?", (pending['id'],))
+            conn.commit()
+            return 'approved'
 
     def approve_pending(self, pending_id: str) -> bool:
         """Approve a pending request: add user to allowed_users in channel config, delete pending.

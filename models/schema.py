@@ -1215,6 +1215,23 @@ class SchemaMixin:
                 )
             """)
 
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS mattermost_threads (
+                    id TEXT PRIMARY KEY,
+                    evonic_channel_id TEXT NOT NULL,
+                    agent_id TEXT NOT NULL,
+                    mattermost_channel_id TEXT NOT NULL,
+                    root_post_id TEXT NOT NULL,
+                    started_by_user_id TEXT,
+                    progress_post_id TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (evonic_channel_id) REFERENCES channels(id) ON DELETE CASCADE,
+                    UNIQUE(evonic_channel_id, mattermost_channel_id, root_post_id)
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_mattermost_threads_lookup ON mattermost_threads(evonic_channel_id, mattermost_channel_id, root_post_id)")
+
             conn.commit()
 
         # Migrate chat data from main DB to per-agent DBs

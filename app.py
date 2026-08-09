@@ -100,6 +100,7 @@ from routes.safety_rules import safety_rules_bp
 from routes.update import update_bp
 from routes.rtk import rtk_bp
 from routes.realtime import realtime_bp
+from routes.mattermost import mattermost_bp
 import config
 from backend.version import get_version
 
@@ -247,6 +248,7 @@ app.register_blueprint(safety_rules_bp)
 app.register_blueprint(update_bp)
 app.register_blueprint(rtk_bp)
 app.register_blueprint(realtime_bp)
+app.register_blueprint(mattermost_bp)
 
 
 # ---- Backward-compatible redirect: /settings/* → /system/* ----

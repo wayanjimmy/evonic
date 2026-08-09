@@ -1445,6 +1445,7 @@ html.dark .agent-tab.active {
                     <option value="telegram">Telegram</option>
                     <option value="whatsapp">WhatsApp</option>
                     <option value="discord">Discord</option>
+                    <option value="mattermost">Mattermost</option>
                 </select>
             </div>
             <div class="mb-4">
@@ -4246,6 +4247,7 @@ async function loadChannels() {
     list.innerHTML = channels.map(ch => {
         const typeBadge = ch.type === 'telegram' ? 'bg-blue-100 text-blue-700' :
                           ch.type === 'whatsapp' ? 'bg-green-100 text-green-700' :
+                          ch.type === 'mattermost' ? 'bg-sky-100 text-sky-700 dark:bg-sky-900/60 dark:text-sky-200' :
                           'bg-purple-100 text-purple-700';
         const running = ch.running;
         const statusDot = running ? 'bg-green-500' : 'bg-gray-300';
@@ -4434,6 +4436,16 @@ function updateChannelConfigFields() {
         nameInput.placeholder = 'e.g., Main WhatsApp Bot';
         container.innerHTML = `
             <p class="text-sm text-gray-500 dark:text-gray-400">After adding, scan the QR code with WhatsApp on your phone to connect. No API keys required.</p>`;
+    } else if (type === 'mattermost') {
+        nameInput.placeholder = 'e.g., Main Mattermost Bot';
+        container.innerHTML = `
+            <label class="block mb-1 text-gray-600 dark:text-gray-300 text-sm font-medium">Server URL</label>
+            <input type="url" id="channel-base-url" placeholder="https://mattermost.example.com" class="w-full p-2.5 border border-gray-300 rounded-md text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10 dark:bg-gray-700 dark:text-gray-100 mb-3">
+            <label class="block mb-1 text-gray-600 dark:text-gray-300 text-sm font-medium">Bot Token</label>
+            <input type="password" id="channel-bot-token" placeholder="Mattermost bot access token" class="w-full p-2.5 border border-gray-300 rounded-md text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10 dark:bg-gray-700 dark:text-gray-100">
+            <label class="block mb-1 mt-3 text-gray-600 dark:text-gray-300 text-sm font-medium">Approval Action Callback URL (optional)</label>
+            <input type="url" id="channel-action-callback-url" placeholder="https://evonic.example.com/api/channels/mattermost/actions" class="w-full p-2.5 border border-gray-300 rounded-md text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10 dark:bg-gray-700 dark:text-gray-100">
+            <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">The bot must be able to read intended channels, post replies, edit its own posts, and upload/download files when attachments are enabled. Public/private channel messages require @mention; owned thread replies continue without repeating the mention.</p>`;
     } else {
         nameInput.placeholder = 'e.g., Main Discord Bot';
         container.innerHTML = `
@@ -4449,6 +4461,10 @@ async function addChannel() {
     let config = {};
     if (type === 'telegram' || type === 'discord') {
         config.bot_token = (document.getElementById('channel-bot-token')?.value || '').trim();
+    } else if (type === 'mattermost') {
+        config.base_url = (document.getElementById('channel-base-url')?.value || '').trim();
+        config.bot_token = (document.getElementById('channel-bot-token')?.value || '').trim();
+        config.action_callback_url = (document.getElementById('channel-action-callback-url')?.value || '').trim();
     } else if (type === 'whatsapp') {
         // Baileys-based: no API keys needed
     }
@@ -6226,7 +6242,7 @@ function buildBgProcessesHtml(procs) {
     for (const p of running) {
         const secs = Math.max(0, Math.floor(Date.now() / 1000 - p.started_at));
         const elapsed = secs < 60 ? `${secs}s` : (secs < 3600 ? `${Math.floor(secs / 60)}m` : `${Math.floor(secs / 3600)}h${Math.floor((secs % 3600) / 60)}m`);
-        html += `<li class="flex items-center gap-1.5 cursor-pointer rounded px-1 py-0.5 -mx-1 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors" onclick="openBgProcessModal('${escapeHtml(p.job_id)}')" title="Click to view details">${liveDot}<span class="text-green-500 dark:text-green-400 font-mono text-[11px] flex-shrink-0 select-none">❯</span><span class="font-mono text-[11px] text-gray-700 dark:text-gray-200 truncate">${escapeHtml(p.command)}</span>${p.monitored ? '<span class="font-mono text-[10px] text-gray-400 dark:text-gray-500 flex-shrink-0" title="A monitor is attached — the agent will be notified">👁</span>' : ''}<span class="font-mono text-[10px] text-gray-400 dark:text-gray-500 flex-shrink-0 ml-auto tabular-nums">${escapeHtml(elapsed)}</span></li>`;
+        html += `<li class="flex items-center gap-1.5 cursor-pointer rounded px-1 py-0.5 -mx-1 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors" onclick="openBgProcessModal('${escapeHtml(p.job_id)}')" title="Click to view details">${liveDot}<span class="text-green-500 dark:text-green-400 font-mono text-[11px] flex-shrink-0 select-none">❯</span><span class="font-mono text-[11px] text-gray-700 dark:text-gray-200 truncate">${escapeHtml(p.command)}</span><span class="font-mono text-[10px] text-gray-400 dark:text-gray-500 flex-shrink-0 ml-auto tabular-nums">${escapeHtml(elapsed)}</span></li>`;
     }
     html += '</ul></div>';
     return html;

@@ -446,32 +446,34 @@ class MattermostChannel(BaseChannel):
                 progress_post_id = (row or {}).get('progress_post_id')
             except Exception:
                 progress_post_id = None
-        if progress_post_id:
-            self._discard_progress_post(progress_post_id, mm_channel_id, root_id)
+        # Post all final chunks first, then complete the progress post.
+        # This ordering ensures the user always receives the answer even if
+        # the progress-completion patch fails.
         for chunk in chunks:
             self._post(mm_channel_id, chunk, root_id=root_id or None)
+        if progress_post_id:
+            self._complete_progress_post(progress_post_id, mm_channel_id, root_id)
         from backend.event_stream import event_stream
         event_stream.emit('message_sent', {
             'channel_type': 'mattermost', 'channel_id': self.channel_id,
             'external_user_id': external_user_id, 'message': text,
         })
 
-    def _discard_progress_post(self, progress_post_id: str, mm_channel_id: str,
+    def _complete_progress_post(self, progress_post_id: str, mm_channel_id: str,
                                root_id: str) -> None:
-        """Remove progress placeholder before posting the final answer.
+        """Patch the progress placeholder to ✅ Done after the final answer is posted.
 
-        Mattermost marks patched posts as Edited and keeps their original thread
-        position. Reusing a progress post as the final answer can therefore make
-        the next answer appear as an edit of an earlier bot message. Use a fresh
-        final reply instead and delete the placeholder best-effort.
+        Mattermost soft-deletes posts on DELETE, leaving visible "(message deleted)"
+        tombstones. Instead, patch the placeholder to a compact completion marker.
+        The post will show as Edited and retain its original thread position, which
+        is semantically correct: it was a status record that transitioned from
+        "working" to "done".
         """
         try:
-            self._request('DELETE', f'/api/v4/posts/{progress_post_id}')
+            self._request('PUT', f'/api/v4/posts/{progress_post_id}/patch',
+                          json={'message': '✅ Done'})
         except Exception:
-            try:
-                self._request('PUT', f'/api/v4/posts/{progress_post_id}/patch', json={'message': '✅ Done'})
-            except Exception:
-                pass
+            pass
         if root_id:
             try:
                 from models.db import db

@@ -162,12 +162,16 @@ def test_progress_post_persisted_and_final_posts_fresh_reply(monkeypatch):
     chan = _make_channel(db)
     db.upsert_mattermost_thread(chan.channel_id, chan.agent_id, 'c1', 'root1', 'user1')
     chan._reply_roots['mm:thread:c1:root1'] = ('c1', 'root1')
+    patches = []
     deletes = []
     original_request = chan._request
 
     def fake_request(method, path, **kwargs):
         if method == 'DELETE':
             deletes.append(path)
+            return {}
+        if method == 'PUT' and '/patch' in path:
+            patches.append((path, kwargs.get('json', {}).get('message', '')))
             return {}
         return original_request(method, path, **kwargs)
 
@@ -178,10 +182,17 @@ def test_progress_post_persisted_and_final_posts_fresh_reply(monkeypatch):
     assert row['progress_post_id'] == 'post-1'
 
     chan._do_send('mm:thread:c1:root1', 'final answer')
-    assert deletes == ['/api/v4/posts/post-1']
+
+    # Final answer is posted as a fresh reply
+    assert chan.sent[-1]['message'] == 'final answer'
+    # Progress post is patched to ✅ Done, never soft-deleted
+    assert deletes == []
+    assert len(patches) == 1
+    assert patches[0][0] == '/api/v4/posts/post-1/patch'
+    assert patches[0][1] == '✅ Done'
+    # DB progress reference is cleared
     row = db.get_mattermost_thread(chan.channel_id, 'c1', 'root1')
     assert row['progress_post_id'] is None
-    assert chan.sent[-1]['message'] == 'final answer'
 
 
 def test_attachment_download_and_persistence(tmp_path, monkeypatch):
