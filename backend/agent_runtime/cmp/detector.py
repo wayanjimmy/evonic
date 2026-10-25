@@ -253,6 +253,19 @@ def detect(cmp: dict, ms, user_text: str, recent_tail: str = '',
                      f'short message (<= {_SHORT_MSG_MAX_WORDS} words), no path id — '
                      'insufficient signal to switch')
 
+    # The Decision Profile has a narrower contract than CMP's route envelope:
+    # it can safely veto a path switch, but never creates one. This preserves
+    # the historic detector as the default for every profile failure.
+    try:
+        from backend.agent_decisions import get_builtin_decision_runner, path_boundary_input
+        active = cmp.get('paths', {}).get(cmp.get('active_id'), {})
+        boundary = get_builtin_decision_runner().decide(
+            'agent.path_boundary', path_boundary_input(text, active.get('goal'), active.get('title')))
+        if boundary and boundary.get('belongs_to_current') is True:
+            return _done('continue', None, 'DecisionProfile', 'profile says request belongs to active path')
+    except Exception:
+        _logger.debug('Decision Profile path boundary unavailable; using CMP detector', exc_info=True)
+
     try:
         env = _call_turn_llm(cmp, ms, text, recent_tail, recent_dialogue,
                              initializing, session_id=session_id,

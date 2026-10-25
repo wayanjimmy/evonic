@@ -15,9 +15,9 @@
 }
 
 html.dark {
-    --sidebar-bg: #0f172a;
+    --sidebar-bg: var(--bg-page, #0a0f1c);   /* = page colour (darker than the navbar), so the navbar's inverted corner stays visible above the sidebar */
     --sidebar-hover: rgba(255, 255, 255, 0.06);
-    --sidebar-tooltip-bg: #1e293b;
+    --sidebar-tooltip-bg: #111827;
     --sidebar-avatar-bg: #334155;
     --sidebar-text: #e2e8f0;
     --sidebar-text-muted: #94a3b8;
@@ -34,6 +34,11 @@ html.dark {
     min-width: 64px;
     flex-shrink: 0;
     height: calc(100vh - 56px);
+    /* Pages that scroll (Evaluate, History, …) used to leave the rail behind: it was a fixed-height block that scrolled away and
+       ended mid-page. Sticky keeps it pinned under the navbar for the whole scroll. */
+    position: sticky;
+    top: 56px;
+    align-self: flex-start;
     background: var(--sidebar-bg);
     display: flex;
     flex-direction: column;
@@ -189,41 +194,58 @@ html.dark {
     color: #94a3b8;
 }
 
-/* ── Burger Toggle Button (in header navbar, left of Evonic logo) ── */
+/* ── Sidebar toggle (header, left of the Evonic logo) ──
+   The button box stays 64px wide so it lines up with the avatar column and the logo does not move;
+   the visible control is a 40px rounded square drawn by ::before, centred in that box. */
 .sidebar-toggle-btn {
+    position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
     width: 64px;
-    height: 36px;
+    height: 40px;
+    padding: 0;
     border: none;
     background: transparent;
     color: var(--text-muted, #94a3b8);
     cursor: pointer;
-    border-radius: 6px;
     flex-shrink: 0;
-    transition: background 0.15s ease, color 0.15s ease;
+    -webkit-tap-highlight-color: transparent;
+    outline: none;
+    transition: color 0.15s ease;
 }
-
-.sidebar-toggle-btn:hover {
-    background: rgba(0, 0, 0, 0.06);
-    color: var(--text-heading, #1e293b);
+.sidebar-toggle-btn::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 12px;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: rgba(100, 116, 139, 0.10);
+    transition: background 0.15s ease, transform 0.12s ease, box-shadow 0.15s ease;
 }
-
-html.dark .sidebar-toggle-btn:hover {
-    background: rgba(255, 255, 255, 0.1);
-    color: #e2e8f0;
-}
+.sidebar-toggle-btn:hover { color: var(--text-heading, #1e293b); }
+.sidebar-toggle-btn:hover::before { background: rgba(100, 116, 139, 0.20); }
+html.dark .sidebar-toggle-btn:hover { color: #e2e8f0; }
+html.dark .sidebar-toggle-btn::before { background: rgba(148, 163, 184, 0.10); }
+html.dark .sidebar-toggle-btn:hover::before { background: rgba(148, 163, 184, 0.20); }
+.sidebar-toggle-btn:active::before { transform: scale(0.94); }
+/* Keyboard focus only — mouse clicks no longer leave a heavy ring behind */
+.sidebar-toggle-btn:focus-visible::before { box-shadow: 0 0 0 2px #818cf8; }
 
 .sidebar-toggle-btn svg {
+    position: relative;
     width: 20px;
     height: 20px;
-    transition: transform 0.25s ease;
 }
+/* The filled left pane shows "sidebar open"; it fades out when the sidebar is collapsed */
+.sidebar-toggle-btn .sb-fill { opacity: 0.85; transition: opacity 0.25s ease; }
+.sidebar-toggle-btn.collapsed .sb-fill { opacity: 0; }
 
-/* Rotate icon when sidebar is collapsed */
-.sidebar-toggle-btn.collapsed svg {
-    transform: rotate(180deg);
+/* Desktop: the sidebar is always open, so the toggle is not shown (it stays on tablet/mobile) */
+@media (min-width: 1024px) {
+    .sidebar-toggle-btn { display: none; }
 }
 
 /* ── Responsive: mobile (below lg breakpoint) ── */
@@ -238,7 +260,12 @@ html.dark .sidebar-toggle-btn:hover {
 @media (max-width: 768px) {
     .sidebar-toggle-btn {
         margin-left: -1rem;
+        width: 52px;   /* 12px left slack + 40px circle: no dead space before the brand */
+        box-sizing: border-box;
+        padding-left: 12px;   /* keep the icon centred in the circle, not in the whole button */
+        color: #4b5563;       /* same icon tone as the hamburger on the right */
     }
+    html.dark .sidebar-toggle-btn { color: #e2e8f0; }
 }
 
 /* ── Bubble Popup (turn-complete notification) ── */
@@ -248,7 +275,7 @@ html.dark .sidebar-toggle-btn:hover {
     background: #ffffff;
     color: #1e293b;
     border: 1px solid rgba(0, 0, 0, 0.12);
-    border-radius: 18px;
+    border-radius: 12px;
     padding: 0;
     width: 260px;
     max-width: calc(100vw - 100px);

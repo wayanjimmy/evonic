@@ -19,6 +19,7 @@ import pwd
 import shutil
 
 from backend.tools._workspace import effective_agent_id
+from backend.tools.lib.simulation_scope import shared_agents_dir
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _ATTACHMENTS_ROOT = os.path.join(BASE_DIR, 'data', 'attachments')
@@ -49,8 +50,10 @@ def _chown_to_run_as(path: str, run_as_user: str | None) -> None:
         pass
 
 
-def _artifacts_dir(agent_id: str, run_as_user: str | None = None) -> str:
-    d = os.path.join(BASE_DIR, 'shared', 'agents', agent_id, 'artifacts')
+def _artifacts_dir(agent_id: str, run_as_user: str | None = None,
+                   artifacts_root: str | None = None) -> str:
+    root = artifacts_root or os.path.join(BASE_DIR, 'shared', 'agents')
+    d = os.path.join(root, agent_id, 'artifacts')
     os.makedirs(d, exist_ok=True)
     _chown_to_run_as(d, run_as_user)
     return d
@@ -67,6 +70,10 @@ def execute(agent: dict, args: dict) -> dict:
     content = args.get('content', '')
     mime_type = args.get('mime_type', '')
     source_path = args.get('source_path', '').strip()
+    delete_source = args.get('delete_source', False)
+
+    if not isinstance(delete_source, bool):
+        return {'error': 'The "delete_source" parameter must be a boolean.'}
 
     if not filename:
         return {'error': 'The "filename" parameter is required. Provide a name for the artifact file, e.g. filename="report.md"'}
@@ -75,14 +82,19 @@ def execute(agent: dict, args: dict) -> dict:
     if '/' in filename or '\\' in filename or '..' in filename:
         return {'error': 'Invalid filename: must not contain "/", "\\", or "..". Use a plain basename like "chart.png" or "output.json"'}
 
-    artifacts_dir = _artifacts_dir(agent_id, run_as_user)
+    artifacts_dir = _artifacts_dir(agent_id, run_as_user, shared_agents_dir(agent))
     filepath = os.path.join(artifacts_dir, filename)
 
     try:
         if source_path:
             # --- source_path mode: stream file bytes into artifacts ---
-            workplace_id = agent.get('workplace_id')
-            sandbox_enabled = agent.get('sandbox_enabled', False)
+            from backend.tools.lib.simulation_scope import force_sandbox
+            # A simulation forces an isolating backend and drops any workplace
+            # (a workplace may resolve to a remote host the sim temp-root
+            # workspace does not exist on).
+            forced = force_sandbox(agent)
+            workplace_id = None if forced else agent.get('workplace_id')
+            sandbox_enabled = True if forced else agent.get('sandbox_enabled', False)
 
             if workplace_id:
                 from backend.workplaces.manager import workplace_manager
@@ -164,40 +176,13 @@ def execute(agent: dict, args: dict) -> dict:
             dest_size = os.stat(filepath).st_size
             source_len = len(source_bytes)
 
-            warning = None
-
-            # Determine whether to delete the source file.
-            # NEVER delete files inside the attachments root — those are
-            # managed by the attachment system and may still be needed by
-            # read_attachment / future agent turns.
-            resolved_real = os.path.realpath(resolved)
-            attachments_real = os.path.realpath(_ATTACHMENTS_ROOT)
-            is_attachment = resolved_real.startswith(attachments_real + os.sep)
-
-            if is_attachment:
-                # Copy-only: source is a user-uploaded attachment; keep it
-                pass
-            elif dest_size == source_len:
-                # Success — delete source file (move behavior)
-                delete_result = backend.delete_file(resolved)
-                if 'error' in delete_result:
-                    warning = f'Source file not deleted after move: {delete_result["error"]}'
-            else:
-                # Size mismatch — retry once (overwrite destination)
+            # --- Verify: retry once if the destination size mismatches ---
+            if dest_size != source_len:
                 with open(filepath, 'wb') as f:
                     f.write(source_bytes)
-
                 _chown_to_run_as(filepath, run_as_user)
-
                 dest_size = os.stat(filepath).st_size
-
-                if dest_size == source_len:
-                    # Retry succeeded — delete source
-                    delete_result = backend.delete_file(resolved)
-                    if 'error' in delete_result:
-                        warning = f'Source file not deleted after retry: {delete_result["error"]}'
-                else:
-                    # Retry still mismatched — delete corrupt destination, return error
+                if dest_size != source_len:
                     try:
                         os.remove(filepath)
                     except OSError:
@@ -209,13 +194,39 @@ def execute(agent: dict, args: dict) -> dict:
                         )
                     }
 
+            warning = None
+            source_deleted = False
+            # NEVER delete files inside the attachments root — those are
+            # managed by the attachment system and may still be needed by
+            # read_attachment / future agent turns.
+            resolved_real = os.path.realpath(resolved)
+            attachments_real = os.path.realpath(_ATTACHMENTS_ROOT)
+            is_attachment = resolved_real.startswith(attachments_real + os.sep)
+
+            if delete_source and not is_attachment:
+                delete_result = backend.delete_file(resolved)
+                if 'error' in delete_result:
+                    warning = f'Source file was retained because deletion failed: {delete_result["error"]}'
+                else:
+                    source_deleted = True
+            elif delete_source and is_attachment:
+                warning = 'Source file was retained because attachment files are managed by the attachment system.'
+
+            source_exists = backend.file_exists(resolved)
             stat = os.stat(filepath)
             response = {
                 'result': 'Artifact saved successfully',
                 'filepath': filepath,
                 'filename': filename,
                 'size': stat.st_size,
+                'source_exists': source_exists,
+                'source_deleted': source_deleted,
             }
+            if source_exists:
+                response['source_cleanup_hint'] = (
+                    'The source file was retained. When it is no longer needed, '
+                    'call save_artifact with delete_source=true to remove it after copying.'
+                )
             if warning:
                 response['warning'] = warning
             return response

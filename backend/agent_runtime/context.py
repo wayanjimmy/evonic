@@ -30,9 +30,11 @@ def _token_count(text: str) -> int:
 
 from models.db import db
 from models.boolean import message_wrapper_enabled
+from models.chat import is_human_facing_external_user_id
 from backend.tools import tool_registry
 from backend.tools.registry import BUILTIN_TOOL_IDS
 from backend.skills_manager import SkillsManager, skills_manager
+from backend.agent_runtime import simulation_spec as sim_spec
 from backend.agent_runtime.evomem_client import (
     get_evomem_db_mtime,
 )
@@ -70,6 +72,14 @@ def _effective_id(agent: Dict[str, Any]) -> str:
 
 def _system_prompt_path(agent_id: str) -> str:
     return os.path.join(_AGENTS_DIR, agent_id, 'SYSTEM.md')
+
+
+def _kb_dir(agent: Dict[str, Any], eid: str) -> str:
+    """KB directory for *agent*: under the simulation tree for sim agents."""
+    if sim_spec.is_simulation(agent):
+        from backend.tools.lib import simulation_scope as _sim_scope
+        return os.path.join(_sim_scope.agents_dir(agent), eid, 'kb')
+    return os.path.join(_AGENTS_DIR, eid, 'kb')
 
 
 def _get_mtime(path: str) -> float:
@@ -272,7 +282,7 @@ def _build_static_prompt(agent: Dict[str, Any]) -> str:
             parts.append(f"\n## Language\n{_lang_text}")
 
     # Inject system_prompt from assigned tool definitions
-    assigned_ids = set(db.get_agent_tools(eid))
+    assigned_ids = set(sim_spec.tools(agent, eid))
 
     if assigned_ids:
         seen_fn_names = set()
@@ -383,10 +393,11 @@ def _build_static_prompt(agent: Dict[str, Any]) -> str:
         )
         parts.append("`" + "`, `".join(_mem_keys) + "`")
 
-    # List available skills with SYSTEM.md so the agent knows what it can load
+    # List available lazy skills so the agent knows what it can load. SYSTEM.md
+    # is optional: a lazy skill can expose tools without additional instructions.
     skills_mgr = skills_manager
-    _allowed_skills = None if agent.get('is_super') else set(db.get_agent_skills(eid))
-    skills_with_system_md = []
+    _allowed_skills = None if agent.get('is_super') else set(sim_spec.skills(agent, eid))
+    lazy_skills = []
     skill_briefs = []
     for skill in skills_mgr.list_skills():
         if not skills_mgr.is_skill_enabled(skill.get('id', '')):
@@ -400,19 +411,16 @@ def _build_static_prompt(agent: Dict[str, Any]) -> str:
         # Only list lazy skills — eager skills' tools are already in the tool list
         if not skill.get('lazy_tools', False):
             continue
-        skill_dir = skill.get('_dir', os.path.join(_BASE_DIR, 'skills', skill['id']))
-        system_md_path = os.path.join(skill_dir, 'SYSTEM.md')
-        if os.path.isfile(system_md_path):
-            skills_with_system_md.append(skill['id'])
-            # brief is for agents; fall back to description if no brief defined
-            brief = skill.get('brief', '').strip() or skill.get('description', '').strip()
-            if brief:
-                skill_briefs.append(brief)
+        lazy_skills.append(skill['id'])
+        # brief is for agents; fall back to description if no brief defined
+        brief = skill.get('brief', '').strip() or skill.get('description', '').strip()
+        if brief:
+            skill_briefs.append(brief)
 
-    if skills_with_system_md:
+    if lazy_skills:
         parts.append("\n## Skills")
         parts.append("You have these skills that can be loaded using `use_skill` tool:")
-        for skill_id in skills_with_system_md:
+        for skill_id in lazy_skills:
             parts.append(f"- `{skill_id}`")
         # Inject skill briefs — short usage hints defined in skill.json
         if skill_briefs:
@@ -498,7 +506,7 @@ def _build_static_prompt(agent: Dict[str, Any]) -> str:
 
     # List available agent variables (names only, never values) so the LLM
     # knows to reference $VAR_NAME in bash/runpy instead of literal secrets.
-    agent_vars = db.get_agent_variables(eid)
+    agent_vars = sim_spec.variables(agent, eid)
     if agent_vars:
         parts.append("\n## Environment Variables")
         parts.append(
@@ -524,7 +532,7 @@ def _cache_key_valid(agent: Dict[str, Any], cache_entry: Dict[str, Any]) -> bool
         return False
 
     # Check KB dir mtime
-    kb_dir = os.path.join(_AGENTS_DIR, eid, 'kb')
+    kb_dir = _kb_dir(agent, eid)
     if _get_mtime(kb_dir) != cache_entry['kb_mtime']:
         return False
 
@@ -533,7 +541,7 @@ def _cache_key_valid(agent: Dict[str, Any], cache_entry: Dict[str, Any]) -> bool
         return False
 
     # Check tools hash (assigned tool IDs)
-    assigned_ids = frozenset(db.get_agent_tools(eid))
+    assigned_ids = frozenset(sim_spec.tools(agent, eid))
     if str(sorted(assigned_ids)) != cache_entry['tools_hash']:
         return False
 
@@ -546,7 +554,7 @@ def _cache_key_valid(agent: Dict[str, Any], cache_entry: Dict[str, Any]) -> bool
         return False
 
     # Check agent variables hash (adding/removing/changing variables must invalidate)
-    current_vars = db.get_agent_variables(eid)
+    current_vars = sim_spec.variables(agent, eid)
     vars_key = str(sorted((v['key'], v.get('is_secret', False)) for v in current_vars))
     if hashlib.sha256(vars_key.encode()).hexdigest() != cache_entry.get('vars_hash', ''):
         return False
@@ -609,13 +617,13 @@ def build_system_prompt(agent: Dict[str, Any], injected_system_vars: Dict[str, s
 
         # Build mtime snapshot for cache validation
         sp_path = _system_prompt_path(eid)
-        kb_dir = os.path.join(_AGENTS_DIR, eid, 'kb')
+        kb_dir = _kb_dir(agent, eid)
         skills_hash = _get_skills_mtime_hash()
 
-        assigned_ids = frozenset(db.get_agent_tools(eid))
+        assigned_ids = frozenset(sim_spec.tools(agent, eid))
 
         # Compute variables hash for cache invalidation
-        current_vars = db.get_agent_variables(eid)
+        current_vars = sim_spec.variables(agent, eid)
         vars_key = str(sorted((v['key'], v.get('is_secret', False)) for v in current_vars))
         vars_hash = hashlib.sha256(vars_key.encode()).hexdigest()
 
@@ -677,8 +685,11 @@ def build_system_prompt(agent: Dict[str, Any], injected_system_vars: Dict[str, s
                        f"{now.strftime('%Y-%m-%d')}, {now.strftime('%H:%M:%S')} (WIB/UTC+7)")
 
     # Run-as-user awareness: tell agent which user they execute as (no sudo needed).
+    # Only the local backend honours run_as_user; an agent with a workplace runs
+    # through that workplace's backend (for an Evonet tunnel: the user running
+    # the Evonet process on the target host), so claiming it would be a lie.
     run_as_user = agent.get('run_as_user')
-    if run_as_user and not agent.get('sandbox_enabled'):
+    if run_as_user and not agent.get('sandbox_enabled') and not agent.get('workplace_id'):
         prompt += f"\n\nYou are run as the **{run_as_user}** user."
 
     # Bwrap sandbox awareness: agents executing inside a bubblewrap sandbox
@@ -778,6 +789,7 @@ def build_system_prompt(agent: Dict[str, Any], injected_system_vars: Dict[str, s
         ("/jobs", "List background jobs for this session and any monitors attached to them"),
         ("/dump", "Dump current session as JSONL file for download"),
         ("/model", "Show or switch LLM model"),
+        ("/fast", "Show or set Codex Fast mode for this session"),
     ]
     slash_commands.append(("/plan", "Switch to plan mode"))
     slash_commands.append(("/unfocus", "Force-clear focus mode — use when agent is stuck in focus after a failed task"))
@@ -821,6 +833,12 @@ def build_system_prompt(agent: Dict[str, Any], injected_system_vars: Dict[str, s
         remove_set = hidden | disabled
         if remove_set:
             slash_commands = [(n, d) for n, d in slash_commands if n not in remove_set]
+
+    # Hide /help from the advertised command list when the per-agent help
+    # toggle is off — the command is silently ignored at runtime (no reply,
+    # no LLM fallthrough), so advertising it would be misleading.
+    if not bool(agent.get('help_enabled', True)):
+        slash_commands = [(n, d) for n, d in slash_commands if n != '/help']
 
     if slash_commands:
         prompt += "\n\n## Slash Commands\n\n**Available commands:**\n"
@@ -882,7 +900,7 @@ def build_tools(agent: Dict[str, Any]) -> List[Dict[str, Any]]:
     # sees only messaging tools the agent can actually execute. Sub-agents inherit
     # their parent's assignments.
     eid = _effective_id(agent)
-    assigned_ids = set(db.get_agent_tools(eid))
+    assigned_ids = set(sim_spec.tools(agent, eid))
 
     # Built-in tools (use_skill, set_mode, remember, recall, etc.)
     # Can be disabled per-agent via builtin_tools_enabled advanced setting.
@@ -890,6 +908,7 @@ def build_tools(agent: Dict[str, Any]) -> List[Dict[str, Any]]:
         'id': agent['id'],
         'is_super': bool(agent.get('is_super')),
         'workplace_id': agent.get('workplace_id'),
+        'workplace_switch_enabled': bool(agent.get('workplace_switch_enabled')),
         'send_file_allowed_path_regex': agent.get('send_file_allowed_path_regex', ''),
         'enable_atg': bool(agent.get('enable_atg')) and bool(agent.get('enable_agent_state')),
         'enable_cmp': bool(agent.get('enable_cmp')) and bool(agent.get('enable_agent_state')),
@@ -981,7 +1000,7 @@ def build_tools(agent: Dict[str, Any]) -> List[Dict[str, Any]]:
     # This ensures that when an agent has a skill assigned in agent_skills and that skill
     # is eagerly loaded (no lazy_tools=true), the tools are available without manual
     # tool assignment in agent_tools.
-    assigned_skill_ids = set(db.get_agent_skills(eid))
+    assigned_skill_ids = set(sim_spec.skills(agent, eid))
     if assigned_skill_ids:
         for skill in skills_manager.list_skills():
             skill_id = skill.get('id', '')
@@ -1362,33 +1381,35 @@ def build_message_entry(msg: dict, agent: dict, has_describe_image: bool = True)
     return entry
 
 
-def build_user_identity_context(channel_id: str, external_user_id: str):
-    """Look up the channel user's display name and build an identity context block.
-
-    Returns a string for insertion into the LLM conversation context, or None
-    when the channel has no display name on file for this user.
-    """
-    if not channel_id or not external_user_id:
+def build_user_identity_context(channel_id: str | None, external_user_id: str):
+    """Build trusted sender context for eligible human-facing sessions."""
+    if not is_human_facing_external_user_id(external_user_id):
         return None
 
-    try:
-        display_name = db.get_user_display_name(channel_id, external_user_id)
-    except Exception:
-        _logger.warning(
-            "Failed to look up display name for channel=%s user=%s",
-            channel_id, external_user_id, exc_info=True,
-        )
-        return None
+    display_name = None
+    if channel_id:
+        try:
+            display_name = db.get_user_display_name(channel_id, external_user_id)
+        except Exception:
+            _logger.warning(
+                "Failed to look up display name for channel=%s user=%s",
+                channel_id, external_user_id, exc_info=True,
+            )
 
+    sender_line = f"Channel sender ID: `{external_user_id}`."
     if not display_name or display_name == 'unknown':
-        return None
+        return (
+            "## Current User\n"
+            f"{sender_line}\n"
+            "This identifier is trusted channel metadata for this session, not "
+            "proof of identity or authorization."
+        )
 
     return (
         "## Current User\n"
-        f"You are currently speaking with: **{display_name}** "
-        f"(channel user ID: `{external_user_id}`).\n"
+        f"You are currently speaking with: **{display_name}**. {sender_line}\n"
         "This identity is provided by the chat channel and is authoritative "
         "for this session. If you have previously remembered a different name "
         "for this user — disregard it. Always address this user as "
         f"**{display_name}** throughout this conversation."
-    )
+        )

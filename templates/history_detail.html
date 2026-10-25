@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 
 {% block content %}
+{% set readonly = not session.get('authenticated') %}
 <div class="dashboard">
     <div class="controls">
         <div style="display: flex; align-items: center; position: relative; min-height: 2.5rem;">
@@ -19,7 +20,33 @@
         <div class="run-info-grid">
             <div class="info-item text-center">
                 <span class="info-label">Model</span>
+                {% if readonly %}
                 <span class="info-value">{{ run_info.model_name or 'default' }}</span>
+                {% else %}
+                <!-- Editable model name (authenticated users only) -->
+                <span id="run-model-view" class="inline-flex items-center justify-center gap-1.5">
+                    <span class="info-value" id="run-model-text">{{ run_info.model_name or 'default' }}</span>
+                    <button type="button" id="run-model-edit-btn"
+                            title="Edit model name" aria-label="Edit model name"
+                            class="inline-flex items-center justify-center w-6 h-6 rounded-full text-gray-400 hover:text-indigo-500 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors cursor-pointer">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-3.5 h-3.5" aria-hidden="true">
+                            <path d="M13.586 3.586a2 2 0 1 1 2.828 2.828l-.793.793-2.828-2.828.793-.793Z"></path>
+                            <path d="M11.379 5.793 3 14.172V17h2.828l8.38-8.379-2.83-2.828Z"></path>
+                        </svg>
+                    </button>
+                </span>
+                <span id="run-model-edit" class="items-center justify-center gap-1.5" style="display: none;">
+                    <input id="run-model-input" type="text" maxlength="200"
+                           value="{{ run_info.model_name or '' }}"
+                           placeholder="e.g. gpt-4o-mini" aria-label="Model name"
+                           class="w-40 px-2 py-1 text-sm text-center border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-400">
+                    <button type="button" id="run-model-save-btn"
+                            class="px-2 py-1 text-xs rounded-md bg-indigo-500 text-white hover:bg-indigo-600 cursor-pointer">Save</button>
+                    <button type="button" id="run-model-cancel-btn"
+                            class="px-2 py-1 text-xs rounded-md border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer">Cancel</button>
+                </span>
+                <span id="run-model-status" class="block text-xs mt-1 min-h-[1em]" role="status" aria-live="polite"></span>
+                {% endif %}
             </div>
             <div class="info-item text-center">
                 <span class="info-label">Passed</span>
@@ -114,7 +141,6 @@
         <!-- Notes Tab -->
         <div id="tab-notes" class="detail-tab-panel" style="display: none;">
             <div style="border-radius: 0 0 8px 8px; padding: 1.5rem;" class="bg-white dark:bg-gray-800">
-                {% set readonly = not session.get('authenticated') %}
                 <!-- Summary -->
                 <div style="margin-bottom: 1.5rem;">
                     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem;">
@@ -196,6 +222,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Initialize notes markdown preview
     initNotes();
+
+    // Initialize inline model name editing
+    initModelNameEditor();
 });
 
 // Notes auto-save and markdown preview
@@ -282,6 +311,99 @@ function initNotes() {
             }, 1000);
         });
     }
+}
+
+// Inline model name editing (rendered only for authenticated users)
+function initModelNameEditor() {
+    const view = document.getElementById('run-model-view');
+    const edit = document.getElementById('run-model-edit');
+    const textEl = document.getElementById('run-model-text');
+    const input = document.getElementById('run-model-input');
+    const statusEl = document.getElementById('run-model-status');
+    const editBtn = document.getElementById('run-model-edit-btn');
+    const saveBtn = document.getElementById('run-model-save-btn');
+    const cancelBtn = document.getElementById('run-model-cancel-btn');
+
+    // Read-only view: no edit controls rendered
+    if (!view || !edit || !input || !saveBtn) return;
+
+    let savedValue = input.value;   // last persisted model name
+    let saving = false;
+
+    function setStatus(message, color) {
+        statusEl.textContent = message || '';
+        statusEl.style.color = color || '';
+    }
+
+    function openEditor() {
+        input.value = savedValue;
+        view.style.display = 'none';
+        edit.style.display = 'inline-flex';
+        setStatus('');
+        input.focus();
+        input.select();
+    }
+
+    function closeEditor() {
+        edit.style.display = 'none';
+        view.style.display = '';
+        setStatus('');
+    }
+
+    function saveModelName() {
+        if (saving) return;
+        const next = (input.value || '').trim();
+        if (!next) {
+            setStatus('Model name cannot be empty', '#dc2626');
+            input.focus();
+            return;
+        }
+        if (next === savedValue) {
+            closeEditor();
+            return;
+        }
+
+        saving = true;
+        saveBtn.disabled = true;
+        setStatus('Saving...', '#9ca3af');
+
+        fetch('/api/run/{{ run_info.run_id }}/model-name', {
+            method: 'PATCH',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({model_name: next})
+        })
+        .then(r => r.json().then(body => ({ok: r.ok, body: body})))
+        .then(({ok, body}) => {
+            if (ok && body.success) {
+                savedValue = body.model_name || next;
+                input.value = savedValue;
+                textEl.textContent = savedValue || 'default';
+                closeEditor();
+                setStatus('Saved', '#059669');
+                setTimeout(() => { if (statusEl.textContent === 'Saved') setStatus(''); }, 2000);
+            } else {
+                setStatus((body && body.error) || 'Save failed', '#dc2626');
+            }
+        })
+        .catch(() => setStatus('Save failed', '#dc2626'))
+        .finally(() => {
+            saving = false;
+            saveBtn.disabled = false;
+        });
+    }
+
+    editBtn.addEventListener('click', openEditor);
+    saveBtn.addEventListener('click', saveModelName);
+    cancelBtn.addEventListener('click', closeEditor);
+    input.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            saveModelName();
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            closeEditor();
+        }
+    });
 }
 
 function toggleNotesView(view) {
@@ -989,4 +1111,5 @@ html.dark [style*="color: #4c1d95"] { color: #c4b5fd !important; }
 html.dark [style*="color: #1e40af"] { color: #93c5fd !important; }
 
 </style>
+{% include "partials/evaluate_ui.html" %}
 {% endblock %}

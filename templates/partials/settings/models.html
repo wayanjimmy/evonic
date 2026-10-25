@@ -21,32 +21,21 @@
 </div>
 
 <div class="space-y-4">
-    <!-- Search Bar -->
-    <div class="relative">
-        <input
-            type="text"
-            id="model-search-input"
-            placeholder="Search models or providers…"
-            oninput="settingsModels.filter()"
-            class="w-full border border-gray-200 dark:border-gray-600 rounded-lg pl-10 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 dark:bg-gray-700 dark:text-gray-100"
-        />
-        <svg
-            class="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-        >
-            <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-            />
-        </svg>
+    <!-- Search + status filter -->
+    <div class="st-toolbar">
+        <div class="st-search">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+            <input type="search" id="model-search-input" placeholder="Search models or providers…" oninput="settingsModels.filter()" autocomplete="off" spellcheck="false" />
+        </div>
+        <div class="mcd-seg" id="model-status-filter" role="group" aria-label="Filter models">
+            <button type="button" data-f="all" aria-pressed="true" onclick="settingsModels.setStatusFilter('all')">All</button>
+            <button type="button" data-f="on" aria-pressed="false" onclick="settingsModels.setStatusFilter('on')">Enabled</button>
+            <button type="button" data-f="think" aria-pressed="false" onclick="settingsModels.setStatusFilter('think')">Thinking</button>
+        </div>
     </div>
 
     <!-- Provider-grouped models -->
-    <div id="models-list" class="space-y-6">
+    <div id="models-list" class="mcd-list">
         <p class="text-gray-500 text-center py-4">Loading models…</p>
     </div>
 </div>
@@ -110,7 +99,7 @@
 
             <div class="mb-4">
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="provider-type">
-                    Type
+                    Locality (descriptive only)
                 </label>
                 <select
                     id="provider-type"
@@ -123,7 +112,7 @@
 
             <div class="mb-4">
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="provider-base-url">
-                    Base URL
+                    Endpoint
                 </label>
                 <input
                     type="url"
@@ -144,13 +133,13 @@
                     class="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 dark:bg-gray-700 dark:text-gray-100"
                 />
                 <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">
-                    Shared across models under this provider. Models can override.
+                    Stored only on this provider and shared by its models. Model-level credentials are legacy compatibility data and cannot be edited.
                 </p>
             </div>
 
             <div class="mb-4">
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="provider-api-format">
-                    API Format
+                    Protocol Adapter
                 </label>
                 <select
                     id="provider-api-format"
@@ -158,7 +147,8 @@
                 >
                     <option value="openai">OpenAI</option>
                     <option value="ollama">Ollama</option>
-                    <option value="anthropic">Anthropic</option>
+                    <option value="anthropic">Anthropic (API key)</option>
+                    <option value="claude_cli">Claude Code (CLI)</option>
                     <option value="codex">Codex (OAuth)</option>
                 </select>
             </div>
@@ -179,6 +169,46 @@
                 class="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition"
             >
                 Save Provider
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Provider Credential Setup Modal -->
+<div id="provider-auth-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="provider-auth-title">
+    <div
+        class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-2xl mx-4 flex flex-col max-h-[90vh]"
+    >
+        <div
+            class="flex items-center justify-between gap-4 px-6 pt-5 pb-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0"
+        >
+            <div>
+                <h3 id="provider-auth-title" class="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                    Set up provider
+                </h3>
+                <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">
+                    Select an existing login or connect a different credential.
+                </p>
+            </div>
+            <button
+                type="button"
+                onclick="settingsModels.closeCredentialSetup()"
+                aria-label="Close credential setup"
+                class="text-gray-500 hover:text-gray-800 dark:text-gray-300 dark:hover:text-white text-2xl leading-none rounded focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            >
+                &times;
+            </button>
+        </div>
+        <div id="provider-auth-content" aria-live="polite" class="overflow-y-auto p-6 flex-1">
+            <!-- Dynamically populated -->
+        </div>
+        <div class="flex justify-end px-6 pb-5 pt-4 border-t border-gray-200 dark:border-gray-700 flex-shrink-0">
+            <button
+                type="button"
+                onclick="settingsModels.closeCredentialSetup()"
+                class="px-4 py-2 text-sm font-medium text-gray-800 dark:text-gray-100 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-400 transition"
+            >
+                Close
             </button>
         </div>
     </div>
@@ -231,7 +261,7 @@
                 <label
                     class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
                     for="model-type"
-                    >Type *</label
+                    >Locality (descriptive only) *</label
                 >
                 <select
                     id="model-type"
@@ -261,46 +291,17 @@
                 <label
                     class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
                     for="model-base-url"
-                    >Base URL (override)</label
+                    >Connection source</label
                 >
                 <input
-                    type="url"
+                    type="text"
                     id="model-base-url"
-                    class="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 dark:bg-gray-700 dark:text-gray-100"
-                    placeholder="Leave empty to use provider's URL"
+                    readonly
+                    class="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-gray-50 dark:bg-gray-700 dark:text-gray-300"
+                    value="Inherited from provider"
                 />
             </div>
 
-            <div class="mb-4">
-                <label
-                    class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
-                    for="model-api-format"
-                    >API Format</label
-                >
-                <select
-                    id="model-api-format"
-                    class="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 dark:bg-gray-700 dark:text-gray-100"
-                >
-                    <option value="openai">OpenAI</option>
-                    <option value="ollama">Ollama</option>
-                    <option value="anthropic">Anthropic</option>
-                    <option value="codex">Codex (OAuth)</option>
-                </select>
-            </div>
-
-            <div class="mb-4" id="api-key-group">
-                <label
-                    class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
-                    for="model-api-key"
-                    >API Key (override)</label
-                >
-                <input
-                    type="password"
-                    id="model-api-key"
-                    class="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 dark:bg-gray-700 dark:text-gray-100"
-                    placeholder="Leave empty to use provider's key"
-                />
-            </div>
 
             <div class="mb-4">
                 <label
@@ -487,6 +488,20 @@
                     Vision Supported (model can process images)
                 </label>
             </div>
+
+            <fieldset class="mb-4 rounded-lg border border-indigo-200 dark:border-indigo-800 p-4">
+                <legend class="px-1 text-sm font-semibold text-indigo-800 dark:text-indigo-200">Decision Models capability</legend>
+                <label class="inline-flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+                    <input type="checkbox" id="model-decision-enabled" class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" />
+                    Compatible with structured Decision Profiles
+                </label>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Only enabled compatible models can be selected as a profile's primary or fallback model.</p>
+                <div class="mt-3">
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="model-decision-schemas">Supported schema versions</label>
+                    <input type="text" id="model-decision-schemas" value="decision-schema/v1" aria-describedby="model-decision-schemas-help" class="w-full border rounded-lg px-3 py-2 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-gray-100" />
+                    <p id="model-decision-schemas-help" class="text-xs text-gray-500 dark:text-gray-400 mt-1">Comma-separated. Include <code>decision-schema/v1</code> to use the current profile schema.</p>
+                </div>
+            </fieldset>
 
         </form>
         <div

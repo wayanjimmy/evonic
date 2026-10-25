@@ -96,6 +96,69 @@ def test_chat_state_api_no_cmp_key_when_absent():
         assert 'cmp' not in res.get_json()
 
 
+def test_chat_state_api_context_usage_compares_prompt_tokens_to_window():
+    from app import app
+    from models.db import db
+
+    agent_id, session_id = 'context_usage_agent', 'context_usage_session'
+    db.create_agent({'id': agent_id, 'name': 'Context', 'system_prompt': ''})
+    db.upsert_session_state(session_id, json.dumps({
+        'context_usage': {
+            'prompt_tokens': 80,
+            'completion_tokens': 40,
+            'total_tokens': 120,
+        },
+    }), agent_id=agent_id)
+
+    with app.test_client() as client:
+        with client.session_transaction() as sess:
+            sess['authenticated'] = True
+        res = client.get(f'/api/agents/{agent_id}/chat/state?session_id={session_id}')
+
+    assert res.status_code == 200
+    usage = res.get_json()['context_usage']
+    assert usage['used'] == 80
+
+
+def test_chat_state_api_preserves_session_only_fields_when_cmp_rendering_fails(monkeypatch):
+    from app import app
+    from models.db import db
+    from backend.agent_runtime.llm_loop import _persist_agent_state_split
+    from backend.agent_runtime.cmp import store
+    import backend.agent_runtime.cmp.render as cmp_render
+
+    agent_id, session_id = 'cmp_api_agent3', 'sess-api-3'
+    db.create_agent({'id': agent_id, 'name': 'C', 'system_prompt': ''})
+    state = AgentState(mode='execute', plan_file='plan/session.md')
+    state.update_tasks('set', tasks=['Preserve session state'])
+    state.context_usage = {'prompt_tokens': 100, 'completion_tokens': 25, 'total_tokens': 125}
+    state.cmp = store.new_cmp(state, title='session task', goal='verify state', now_ts=1000)
+    _persist_agent_state_split(state, agent_id, session_id)
+    monkeypatch.setattr(cmp_render, 'render_map', lambda *_: (_ for _ in ()).throw(RuntimeError('render failure')))
+
+    with app.test_client() as client:
+        with client.session_transaction() as sess:
+            sess['authenticated'] = True
+        res = client.get(f'/api/agents/{agent_id}/chat/state?session_id={session_id}')
+
+    assert res.status_code == 200
+    data = res.get_json()
+    assert data['mode'] == 'execute'
+    assert data['plan_file'] == 'plan/session.md'
+    assert data['tasks'][0]['text'] == 'Preserve session state'
+    assert data['context_usage']['used'] > 0
+    assert data['cmp_error'] == 'CMP details are temporarily unavailable.'
+    assert 'cmp' not in data
+
+
+def test_agent_state_renderer_accepts_session_only_state():
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[1] / 'static/js/agent-state.js').read_text(encoding='utf-8')
+    for expression in ('data.mode', 'data.plan_file', 'data.tasks', 'data.loaded_skills', 'data.context_usage'):
+        assert expression in source
+
+
 def test_cmp_model_setting_resolution():
     """cmp_model_id → task_classifier_model_id → default fallback chain."""
     from unittest.mock import MagicMock, patch

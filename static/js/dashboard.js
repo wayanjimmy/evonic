@@ -14,6 +14,7 @@ function loadDashboard() {
         renderRecentRuns(data.recent_runs);
         renderModelUsage(data.model_usage);
         renderPluginCards(data.plugin_cards);
+        renderAttention(data.attention);
     }).fail(function() {
         $('#agent-empty, #schedules-empty, #leaderboard-empty, #recent-runs-empty, #model-usage-empty')
             .html('<p class="p-6 text-sm text-red-500 dark:text-red-400">Failed to load data. Please try refreshing the page.</p>');
@@ -48,6 +49,7 @@ function renderStats(stats) {
     $('#stat-tool-count').text(stats.tool_count);
     $('#stat-active-channel-count').text(stats.active_channel_count);
     $('#stat-channel-count').text(stats.channel_count);
+    $('#stat-channel-sub').text(stats.channel_count === 0 ? 'none connected yet' : '\u00a0');
 }
 
 function renderSecondaryStats(skillStats, pluginStats, scheduleStats) {
@@ -59,6 +61,7 @@ function renderSecondaryStats(skillStats, pluginStats, scheduleStats) {
     $('#stat-plugin-total').text(pluginStats.total);
     $('#stat-schedule-active').text(scheduleStats.active);
     $('#stat-schedule-total').text(scheduleStats.total);
+    $('#stat-schedule-sub').text(scheduleStats.total > scheduleStats.active ? (scheduleStats.total - scheduleStats.active) + ' paused' : '\u00a0');
 }
 
 // ── Agents ────────────────────────────────────────────────────────────────────
@@ -82,21 +85,20 @@ function renderAgents(agents) {
             ? '<img src="/api/agents/' + a.id + '/avatar?size=small" class="w-9 h-9 rounded-full object-cover flex-shrink-0" alt="">'
             : '<div class="w-9 h-9 rounded-full bg-indigo-100 dark:bg-indigo-500/20 grid place-items-center flex-shrink-0 text-xs font-bold text-indigo-600 dark:text-indigo-300">' + escapeHtml(initial) + '</div>';
         var modelBadge = a.model_id
-            ? '<span class="text-[11px] bg-gray-100 dark:bg-gray-700/60 text-gray-500 dark:text-gray-400 px-2 py-0.5 rounded font-mono hidden md:inline">' + escapeHtml(truncate(a.model_id, 22)) + '</span>'
+            ? '<span class="dash-chip hidden md:inline-block" title="' + escapeHtml(a.model_id) + '">' + escapeHtml(truncate(a.model_id, 26)) + '</span>'
             : '';
+        var off = (a.enabled === 0 || a.enabled === false) ? ' <span class="dash-off">off</span>' : '';
+        var chans = a.channel_count > 0 ? '<span title="Channels">' + a.channel_count + (a.channel_count === 1 ? ' channel' : ' channels') + '</span>' : '';
 
         html += '<a href="/agents/' + encodeURIComponent(a.id) + '" class="flex items-center justify-between px-5 py-3.5 hover:bg-gray-50 dark:hover:bg-gray-700/40 transition-colors no-underline text-inherit">'
               +   '<div class="flex items-center gap-3 min-w-0">' + avatar
               +     '<div class="min-w-0">'
-              +       '<div class="text-sm font-medium text-gray-800 dark:text-gray-100 truncate">' + escapeHtml(name) + '</div>'
+              +       '<div class="text-sm font-medium text-gray-800 dark:text-gray-100 truncate">' + escapeHtml(name) + off + '</div>'
               +       '<div class="text-xs text-gray-400 dark:text-gray-500 truncate">' + escapeHtml(desc) + '</div>'
               +     '</div>'
               +   '</div>'
               +   '<div class="flex items-center gap-3 flex-shrink-0 ml-3">' + modelBadge
-              +     '<div class="flex gap-2 text-xs text-gray-400 dark:text-gray-500">'
-              +       '<span title="Tools">' + a.tool_count + ' tools</span>'
-              +       '<span title="Channels">' + a.channel_count + ' ch</span>'
-              +     '</div>'
+              +     '<div class="dash-meta"><span title="Tools">' + a.tool_count + (a.tool_count === 1 ? ' tool' : ' tools') + '</span>' + chans + '</div>'
               +   '</div>'
               + '</a>';
     }
@@ -123,8 +125,8 @@ function renderScheduledTasks(schedules) {
             : '<span class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 dark:bg-gray-700/60 dark:text-gray-400">Paused</span>';
         var meta = [];
         if (s.trigger_type) meta.push(escapeHtml(s.trigger_type));
-        var next = formatDate(s.next_run_at);
-        if (next) meta.push('next ' + next);
+        var next = formatNext(s.next_run_at);
+        if (next) meta.push(next.late ? 'overdue ' + next.text.replace(' ago', '') : 'next ' + next.text);
         var dotColor = active ? 'bg-green-400 dark:bg-green-500' : 'bg-gray-300 dark:bg-gray-600';
 
         html += '<a href="/scheduler" class="flex items-start gap-3 px-5 py-3 hover:bg-gray-50 dark:hover:bg-gray-700/40 transition-colors no-underline text-inherit">'
@@ -138,6 +140,24 @@ function renderScheduledTasks(schedules) {
               + '</a>';
     }
     $list.html(html);
+}
+
+// "in 3 h", "in 2 days", "overdue 12 min": relative to now, so the list answers "when does this run?" at a glance
+function toEpochMs(v) {
+    if (v == null || v === '') return null;
+    var d = new Date(typeof v === 'number' ? v * 1000 : v);
+    return isNaN(d.getTime()) ? null : d.getTime();
+}
+function formatNext(v, nowMs) {
+    var t = toEpochMs(v);
+    if (t === null) return null;
+    var diff = t - (nowMs == null ? Date.now() : nowMs), late = diff < 0, m = Math.round(Math.abs(diff) / 60000), text;
+    if (m < 1) text = late ? 'just now' : 'in <1 min';
+    else if (m < 60) text = (late ? '' : 'in ') + m + ' min';
+    else if (m < 48 * 60) { var h = Math.round(m / 60); text = (late ? '' : 'in ') + h + ' h'; }
+    else { var dd = Math.round(m / 1440); text = (late ? '' : 'in ') + dd + ' days'; }
+    if (late && text !== 'just now') text += ' ago';
+    return { text: text, late: late && m >= 15 };
 }
 
 function formatDate(v) {
@@ -229,15 +249,16 @@ function renderModelUsage(modelUsage) {
     $empty.hide();
     $list.show();
 
-    var maxCount = modelUsage[0].agent_count || 1;
+    var total = modelUsage.reduce(function (n, m) { return n + (m.agent_count || 0); }, 0) || 1;
     var html = '';
     for (var i = 0; i < modelUsage.length; i++) {
         var item = modelUsage[i];
-        var pct = Math.max(4, Math.round(item.agent_count / maxCount * 100));
+        var share = item.agent_count / total * 100;
+        var pct = Math.max(4, Math.round(share));
         html += '<div>'
               +   '<div class="flex justify-between items-center mb-1.5 gap-2">'
               +     '<span class="text-sm text-gray-700 dark:text-gray-300 font-medium truncate" title="' + escapeHtml(item.model) + '">' + escapeHtml(truncate(item.model, 28)) + '</span>'
-              +     '<span class="text-xs text-gray-400 dark:text-gray-500 flex-shrink-0">' + item.agent_count + '</span>'
+              +     '<span class="dash-share">' + item.agent_count + (item.agent_count === 1 ? ' agent' : ' agents') + ' \u00b7 ' + Math.round(share) + '%</span>'
               +   '</div>'
               +   '<div class="w-full bg-gray-100 dark:bg-gray-700/60 rounded-full h-2">'
               +     '<div class="bg-indigo-500 dark:bg-indigo-400 h-2 rounded-full" style="width:' + pct + '%"></div>'
@@ -260,15 +281,21 @@ function renderPluginCards(pluginCards) {
     for (var i = 0; i < pluginCards.length; i++) {
         var card = pluginCards[i];
         var items = card.items || [];
-        html += '<div class="rounded-xl border border-gray-200 dark:border-gray-700/60 bg-white dark:bg-gray-800/40 overflow-hidden">'
-              +   '<div class="flex justify-between items-center px-5 py-4 border-b border-gray-100 dark:border-gray-700/60">'
+        var fc = card.feature_card;
+        html += '<div class="dash-card">'
+              +   '<div class="flex justify-between items-center dash-card-h">'
               +     '<h3 class="text-base font-semibold text-gray-800 dark:text-gray-100 m-0">' + escapeHtml(card.title || 'Plugin Card') + '</h3>'
               +     (card.link ? '<a href="' + escapeHtml(card.link) + '" class="text-xs text-indigo-600 dark:text-indigo-400 hover:underline no-underline">View all</a>' : '')
               +   '</div>';
+        if (fc) {
+            html += '<div class="dash-feature"><div class="dash-feature-v">' + escapeHtml(fc.count) + '</div>'
+                  + (fc.detail ? '<div class="dash-feature-d">' + escapeHtml(fc.detail) + '</div>' : '')
+                  + sparkline(fc.series) + '</div>';
+        }
         if (items.length === 0) {
-            html += emptyState('No items');
+            if (!fc) html += emptyState('No items');
         } else {
-            html += '<div class="divide-y divide-gray-100 dark:divide-gray-700/50">';
+            html += '<div class="divide-y divide-gray-100 dark:divide-gray-700/50' + (fc ? ' border-t border-gray-100 dark:border-gray-700/50' : '') + '">';
             var maxShow = Math.min(items.length, 5);
             for (var j = 0; j < maxShow; j++) {
                 var it = items[j];
@@ -294,4 +321,33 @@ function renderPluginCards(pluginCards) {
     // Reflow: make room for the 3-col plugin column (default is 7 / 5 / hidden).
     $('#agents-card').removeClass('lg:col-span-7').addClass('lg:col-span-5');
     $('#middle-col').removeClass('lg:col-span-5').addClass('lg:col-span-4');
+}
+
+// ── Sparkline: one bar per bucket (24 hourly buckets for token usage) ─────────
+function sparkline(series) {
+    if (!series || !series.length || !series.some(function (v) { return v > 0; })) return '';
+    var max = Math.max.apply(null, series), n = series.length, w = 100 / n, bars = '';
+    for (var i = 0; i < n; i++) {
+        var h = Math.max(v2h(series[i], max), series[i] > 0 ? 6 : 2);
+        bars += '<rect class="bar' + (i === n - 1 ? ' is-last' : '') + '" x="' + (i * w + w * 0.12).toFixed(2) + '" y="' + (40 - h * 0.4).toFixed(2) + '" width="' + (w * 0.76).toFixed(2) + '" height="' + (h * 0.4).toFixed(2) + '" rx="1.2"/>';
+    }
+    return '<svg class="dash-spark" viewBox="0 0 100 40" preserveAspectRatio="none" role="img" aria-label="Last 24 hours">' + bars + '</svg>'
+         + '<div class="dash-spark-axis"><span>24 h ago</span><span>now</span></div>';
+}
+function v2h(v, max) { return max > 0 ? v / max * 100 : 0; }
+
+// ── Needs attention ───────────────────────────────────────────────────────────
+function renderAttention(items) {
+    var $sec = $('#attention');
+    if (!items || !items.length) { $sec.addClass('hidden'); return; }
+    var tone = { danger: 'ag-alert-danger', warn: 'ag-alert-warn', info: 'ag-alert-info' };
+    var icon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>';
+    $('#attention-count').text(items.length);
+    $('#attention-list').html(items.map(function (it) {
+        return '<a href="' + escapeHtml(it.href || '#') + '" class="ag-alert ' + (tone[it.level] || tone.warn) + '">'
+             +   '<span class="ag-alert-ic">' + icon + '</span>'
+             +   '<div class="ag-alert-body"><p class="ag-alert-t">' + escapeHtml(it.title) + '</p>'
+             +   (it.detail ? '<p class="ag-alert-s">' + escapeHtml(it.detail) + '</p>' : '') + '</div></a>';
+    }).join(''));
+    $sec.removeClass('hidden');
 }

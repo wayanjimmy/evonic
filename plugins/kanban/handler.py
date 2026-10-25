@@ -67,13 +67,27 @@ _notifier_paused: bool = False       # global notifier pause flag (UI toggle)
 
 
 def _is_notifier_paused() -> bool:
-    return _notifier_paused
+    """Return whether all automatic Kanban delivery is suspended."""
+    with _state_lock:
+        return _notifier_paused
 
 
-def _set_notifier_paused(paused: bool):
+def _set_notifier_paused(paused: bool) -> bool:
+    """Atomically set the scanner pause state and return the effective value."""
     global _notifier_paused
-    _notifier_paused = paused
-    _log(f'Notifier {"paused" if paused else "resumed"} via UI toggle')
+    with _state_lock:
+        _notifier_paused = bool(paused)
+        effective_state = _notifier_paused
+    _log(f'Notifier {"paused" if effective_state else "resumed"} via UI toggle')
+    return effective_state
+
+
+def _skip_if_notifier_paused(scan_name: str, sdk=None) -> bool:
+    """Prevent paused scanners from reading or delivering any work."""
+    if not _is_notifier_paused():
+        return False
+    _log(f'Notifier is paused — skipping {scan_name}', 'info', sdk)
+    return True
 
 # ── Allowed tools while a task is pending (before activate) ──────────────────
 KANBAN_ALLOWED_TOOLS = {
@@ -183,7 +197,7 @@ def _classify_approval(agent_message: str, user_message: str) -> bool:
         return False
 
 
-def _classify_followup(comment_content: str, prior_comment: str = None) -> bool:
+def _classify_followup(comment_content: str, prior_comment: str = None) -> Optional[bool]:
     """Use LLM as a yes/no classifier: does this comment require the agent to do follow-up work?
 
     Args:
@@ -194,7 +208,9 @@ def _classify_followup(comment_content: str, prior_comment: str = None) -> bool:
 
     Returns True if the comment asks the agent to fix, revise, correct, or do
     additional work on the task.  Returns False on any error (safe default — no
-    false re-opens).
+    false re-opens).  Returns None when the classifier itself could not run
+    (LLM failure or an empty reply), which tells the caller to retry the
+    comment on the next scan instead of treating it as a "no".
     """
     print(f'[kanban/followup-classifier] ENTER comment={comment_content!r:.80}')
     try:
@@ -223,6 +239,12 @@ def _classify_followup(comment_content: str, prior_comment: str = None) -> bool:
             max_tokens=4096,
             enable_thinking=False,
         )
+        if not result.get('success'):
+            print(
+                '[kanban/followup-classifier] LLM call failed '
+                f"({result.get('error_type')}), deferring classification"
+            )
+            return None
         text = ''
         choices = (result.get('response') or {}).get('choices') or []
         if choices:
@@ -237,13 +259,19 @@ def _classify_followup(comment_content: str, prior_comment: str = None) -> bool:
                     text = 'yes'
                 elif last_line.startswith('no'):
                     text = 'no'
+        if not text.strip():
+            print(
+                '[kanban/followup-classifier] empty LLM reply, '
+                'deferring classification'
+            )
+            return None
         needs_followup = text.strip().lower().startswith('yes')
         print(f'[kanban/followup-classifier] result={text!r} needs_followup={needs_followup}')
         return needs_followup
     except Exception as e:
         import traceback
         print(f'[kanban/followup-classifier] EXCEPTION: {e}\n{traceback.format_exc()}')
-        return False
+        return None
 
 
 # ━━━ Dashboard card handler ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -414,6 +442,11 @@ def _notify_agent(agent_id: str, task: dict, channel_type: str, sdk=None, force:
                      "Trigger Agents" button to force immediate delivery.
     """
 
+    # A board-wide pause stops every agent trigger, including manual routes that
+    # otherwise use force/force_delay to bypass scheduling safeguards.
+    if _skip_if_notifier_paused('agent notification', sdk):
+        return {'success': False, 'reason': 'paused'}
+
     # Task delay check — bypassed when force_delay=True (e.g. user clicked Trigger Agents)
     if not force_delay:
         if _is_task_delayed(task, _load_config()):
@@ -476,6 +509,14 @@ def _notify_agent(agent_id: str, task: dict, channel_type: str, sdk=None, force:
     )
     if description:
         body += f'**Description:** {description}\n'
+
+    try:
+        from plugins.kanban.db import kanban_db
+        attachment_references = _format_attachment_references(task_id, kanban_db.get_attachments(task_id))
+        if attachment_references:
+            body += f'{attachment_references}\n'
+    except Exception as exc:
+        _log(f'Failed to load attachments for task {task_id}: {exc}', 'warn', sdk)
 
     body += f"</task>\n"
 
@@ -592,25 +633,23 @@ def _pre_set_execute_mode(agent_id: str, task: dict, sdk=None) -> bool:
 
 
 
-def _format_followup_comment(comment: dict, attachments: list) -> str:
-    """Render a follow-up comment with actionable references to its attachments."""
-    content = (comment.get('content') or '').strip()
+def _format_attachment_references(task_id: str | int, attachments: list) -> str:
+    """Render actionable attachment metadata shared by all task notifications."""
     if not attachments:
-        return content
+        return ''
 
     from plugins.kanban.db import ATTACHMENTS_DIR
 
-    lines = [content] if content else []
-    lines.append('Attachments:')
+    lines = ['Attachments:']
     for attachment in attachments:
         attachment_id = attachment.get('id')
         filename = attachment.get('filename') or 'unnamed attachment'
         mime_type = attachment.get('mime_type') or 'application/octet-stream'
         stored_name = attachment.get('stored_name')
-        task_id = attachment.get('task_id') or comment.get('task_id')
+        attachment_task_id = attachment.get('task_id') or task_id
         path = (
-            os.path.join(ATTACHMENTS_DIR, f'task_{task_id}', stored_name)
-            if task_id and stored_name else None
+            os.path.join(ATTACHMENTS_DIR, f'task_{attachment_task_id}', stored_name)
+            if attachment_task_id and stored_name else None
         )
         url = f'/api/kanban/attachments/{attachment_id}/file' if attachment_id else None
         reference = ', '.join(part for part in (
@@ -627,9 +666,118 @@ def _format_followup_comment(comment: dict, attachments: list) -> str:
     return '\n'.join(lines)
 
 
+def _format_followup_comment(comment: dict, attachments: list) -> str:
+    """Render a follow-up comment with actionable references to its attachments."""
+    content = (comment.get('content') or '').strip()
+    attachment_references = _format_attachment_references(comment.get('task_id'), attachments)
+    if not attachment_references:
+        return content
+    return '\n'.join(part for part in (content, attachment_references) if part)
+
+
+def _busy_task_for(agent_id: str) -> str | None:
+    """Task the agent is already committed to, or None if it can take work."""
+    with _state_lock:
+        return (_pending_tasks.get(agent_id) or _active_tasks.get(agent_id)
+                or _paused_tasks.get(agent_id))
+
+
+# ─── Task title flash (Kanban board realtime push) ───────────────────────────
+
+_FLASH_CONFIG_TTL = 10.0
+_flash_config_cache: dict = {'at': 0.0, 'enabled': True, 'decay': 1}
+_flash_last_emit: dict = {}        # task_id -> time.time() of last activity emit
+_flash_agent_tasks: dict = {}      # agent_id -> task_id last flashed
+_FLASH_MIN_EMIT_INTERVAL = 0.25
+
+
+def _as_bool(value) -> bool:
+    """Coerce a plugin config value (bool/str/number) to a boolean."""
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def _flash_settings() -> tuple:
+    """Return (enabled, decay_seconds) for the task flash, cached briefly."""
+    now = time.time()
+    if now - _flash_config_cache['at'] < _FLASH_CONFIG_TTL:
+        return _flash_config_cache['enabled'], _flash_config_cache['decay']
+    enabled, decay = True, 1
+    try:
+        cfg = _load_config()
+        enabled = _as_bool(cfg.get('TASK_FLASH_ENABLED', True))
+        decay = int(float(cfg.get('TASK_FLASH_DECAY_SECONDS', 1) or 1))
+    except Exception:
+        pass
+    decay = max(1, min(decay, 3600))
+    _flash_config_cache.update({'at': now, 'enabled': enabled, 'decay': decay})
+    return enabled, decay
+
+
+def _publish_task_flash(task_id, agent_id: str, event_name: str, extra: dict) -> None:
+    """Publish a kanban task-activity event to the realtime journal."""
+    from backend.realtime_store import realtime_store
+    payload = {
+        'task_id': str(task_id),
+        'agent_id': agent_id or '',
+        'timestamp': int(time.time() * 1000),
+    }
+    payload.update(extra or {})
+    realtime_store.publish('kanban', event_name, payload)
+
+
+def _emit_task_activity(agent_id: str, tool_name: str = '', task_id=None) -> None:
+    """Flash the active task title on the board; throttled to 4 events/second."""
+    if not agent_id:
+        return
+    if task_id is None:
+        with _state_lock:
+            task_id = _active_tasks.get(agent_id)
+    if not task_id:
+        return
+    enabled, decay = _flash_settings()
+    if not enabled:
+        return
+    key = str(task_id)
+    now = time.time()
+    if now - _flash_last_emit.get(key, 0.0) < _FLASH_MIN_EMIT_INTERVAL:
+        return
+    _flash_last_emit[key] = now
+    _flash_agent_tasks[agent_id] = key
+    try:
+        _publish_task_flash(key, agent_id, 'kanban_task_activity', {
+            'tool_name': tool_name or '',
+            'decay_seconds': decay,
+        })
+    except Exception as exc:
+        _log(f'Failed to publish kanban task activity for #{key}: {exc}', 'error')
+
+
+def _emit_task_idle(agent_id: str, grace_seconds: int = 3) -> None:
+    """Tell the board to end the flash shortly after the agent stops working."""
+    if not agent_id:
+        return
+    task_id = _flash_agent_tasks.pop(agent_id, None)
+    if not task_id:
+        return
+    _flash_last_emit.pop(str(task_id), None)
+    enabled, _decay = _flash_settings()
+    if not enabled:
+        return
+    try:
+        _publish_task_flash(str(task_id), agent_id, 'kanban_task_idle', {
+            'grace_seconds': int(grace_seconds),
+        })
+    except Exception as exc:
+        _log(f'Failed to publish kanban task idle for #{task_id}: {exc}', 'error')
+
+
 def _notify_agent_followup(agent_id: str, task: dict, merged_content: str,
                            channel_type: str, sdk=None,
                            prior_content: str = None, comment_author: str = None) -> bool:
+    if _skip_if_notifier_paused('comment follow-up notification', sdk):
+        return False
     if comment_author is None:
         comment_author = _get_owner_name()
     """Notify an agent that a completed task needs follow-up based on user comment(s).
@@ -637,10 +785,8 @@ def _notify_agent_followup(agent_id: str, task: dict, merged_content: str,
     Respects the busy guard — if the agent is already working on another task,
     the notification is skipped and the follow-up will be picked up next scan.
     """
-    with _state_lock:
-        is_busy = agent_id in _pending_tasks or agent_id in _active_tasks or agent_id in _paused_tasks
-        busy_task_id = _pending_tasks.get(agent_id) or _active_tasks.get(agent_id) or _paused_tasks.get(agent_id)
-    if is_busy:
+    busy_task_id = _busy_task_for(agent_id)
+    if busy_task_id:
         _log(
             f'Agent {agent_id} is busy with task {busy_task_id}, '
             f'deferring follow-up for task "{task["title"]}" until current task is done',
@@ -743,6 +889,9 @@ def _notify_stale_task(agent_id: str, task: dict, channel_type: str, sdk=None):
     Bypasses pick/approve since the task is already in-progress in the DB.
     Sets _active_tasks directly so tool guards work correctly.
     """
+    if _skip_if_notifier_paused('stale-task notification', sdk):
+        return
+
     task_id = task['id']
     task_ref = f'#{task_id}'
     title = task['title']
@@ -756,6 +905,15 @@ def _notify_stale_task(agent_id: str, task: dict, channel_type: str, sdk=None):
     )
     if description:
         body += f'**Description:** {description}\n'
+
+    try:
+        from plugins.kanban.db import kanban_db
+        attachment_references = _format_attachment_references(task_id, kanban_db.get_attachments(task_id))
+        if attachment_references:
+            body += f'{attachment_references}\n'
+    except Exception as exc:
+        _log(f'Failed to load attachments for stale task {task_id}: {exc}', 'warn', sdk)
+
     body += (
         f'</task>\n\n'
         f'Please resume or close this task:\n'
@@ -775,6 +933,22 @@ def _notify_stale_task(agent_id: str, task: dict, channel_type: str, sdk=None):
     except Exception:
         pass
 
+    # Snapshot whatever we are about to overwrite so a delivery that does not
+    # actually resume the task can be rolled back cleanly. Without this a
+    # deduplicated or merely-injected reminder would strand `_active_tasks`
+    # (blocking every later stale scan) and clobber the agent's persisted
+    # mode/plan/focus.
+    with _state_lock:
+        prev_active = _active_tasks.get(agent_id)
+        prev_since = _task_state_since.get(agent_id)
+        prev_pending = _pending_tasks.get(agent_id)
+        prev_paused = _paused_tasks.get(agent_id)
+    try:
+        from models.db import db as _mdb_state
+        prev_state_content = _mdb_state.get_agent_state(agent_id=agent_id)
+    except Exception:
+        prev_state_content = None
+
     # Mark as active directly — task is already in-progress, skip pick/approve
     with _state_lock:
         _active_tasks[agent_id] = str(task_id)
@@ -783,7 +957,34 @@ def _notify_stale_task(agent_id: str, task: dict, channel_type: str, sdk=None):
         _paused_tasks.pop(agent_id, None)
 
     # Pre-set agent to execute mode when autopilot is ON
-    _pre_set_execute_mode(agent_id, task, sdk)
+    mode_preset = _pre_set_execute_mode(agent_id, task, sdk)
+
+    def _rollback_reservation():
+        with _state_lock:
+            if prev_active is None:
+                _active_tasks.pop(agent_id, None)
+            else:
+                _active_tasks[agent_id] = prev_active
+            if prev_since is None:
+                _task_state_since.pop(agent_id, None)
+            else:
+                _task_state_since[agent_id] = prev_since
+            if prev_pending is not None:
+                _pending_tasks[agent_id] = prev_pending
+            if prev_paused is not None:
+                _paused_tasks[agent_id] = prev_paused
+        if mode_preset and prev_state_content is not None:
+            try:
+                from models.db import db as _mdb_state
+                _mdb_state.upsert_agent_state(prev_state_content, agent_id=agent_id)
+            except Exception:
+                pass
+
+    try:
+        dedup_max_age = int(_load_config().get(
+            'STALE_REMINDER_DEDUP_MAX_AGE_SECONDS', 300))
+    except Exception:
+        dedup_max_age = 300
 
     from backend.agent_runtime.notifier import notify_agent
     result = notify_agent(
@@ -792,18 +993,34 @@ def _notify_stale_task(agent_id: str, task: dict, channel_type: str, sdk=None):
         message=body,
         channel_type=channel_type,
         dedup=True,
+        dedup_max_age_seconds=dedup_max_age,
     )
-    if result['success']:
+    # A reminder only counts as delivered when the runtime actually processed the
+    # turn. A deduplicated send, a failure, or a bare hand-off to a live loop
+    # (injected/buffered/async) leaves the task unresolved, so release the
+    # reservation and let a later scan retry instead of pinning the agent active.
+    if result.get('success') and result.get('delivery') == 'runtime':
         _log(f'Sent stale task reminder to agent {agent_id} for task {task_id}', 'info', sdk)
+        return
+    if result.get('success'):
+        _log(
+            f'Stale task reminder for agent {agent_id} task {task_id} was only '
+            f'queued (delivery={result.get("delivery")!r}) without a confirmed '
+            f'resume — releasing reservation to retry',
+            'warn', sdk,
+        )
     elif result.get('reason') == 'deduplicated':
         _log(f'Skipped duplicate stale reminder for agent {agent_id} task {task_id}', 'info', sdk)
     else:
         _log(f'Failed to send stale task reminder to agent {agent_id}: {result.get("reason")}', 'error', sdk)
-        _active_tasks.pop(agent_id, None)
+    _rollback_reservation()
 
 
 def _scan_stale_tasks(sdk=None):
     """Scan for in-progress tasks the agent is no longer tracking and re-notify."""
+    if _skip_if_notifier_paused('stale-task scan', sdk):
+        return
+
     config = _load_config()
     eligible = _get_kanban_skill_agents()
     if not eligible:
@@ -881,14 +1098,14 @@ def _scan_and_notify(sdk=None) -> dict:
     Returns a dict with result details so callers (esp. the UI) can show
     which agents were notified and which were skipped and why.
     """
+    results = {'notified': 0, 'failed': 0, 'details': []}
+    if _skip_if_notifier_paused('new-task scan', sdk):
+        results['paused'] = True
+        return results
+
     config = _load_config()
     eligible = _get_kanban_skill_agents()
-    results = {'notified': 0, 'failed': 0, 'details': []}
     if not eligible:
-        return results
-    if _notifier_paused:
-        _log('Notifier is paused — skipping scan', 'info', sdk)
-        results['paused'] = True
         return results
 
     channel_type = config.get('CHANNEL_TYPE', 'telegram')
@@ -993,6 +1210,9 @@ def _scan_comments_for_followup(sdk=None):
     LLM classifier; if a comment requests corrections or additional work the task
     is reopened to in-progress and the agent is notified.
     """
+    if _skip_if_notifier_paused('new-comment scan', sdk):
+        return
+
     config = _load_config()
     eligible = _get_kanban_skill_agents()
     if not eligible:
@@ -1032,9 +1252,22 @@ def _scan_comments_for_followup(sdk=None):
         if not unclassified:
             continue
 
+        # Nothing below here is retryable — classifying consumes the comment and
+        # notifying reopens the task — so check the busy guard before consuming
+        # anything.  A busy agent means "try again next scan", not "drop it".
+        busy_task_id = _busy_task_for(assignee)
+        if busy_task_id:
+            _log(
+                f'Agent {assignee} is busy with task {busy_task_id}, '
+                f'deferring comment follow-up on task {task_id} until it is free',
+                'info', sdk,
+            )
+            continue
+
         # Mark all as classified upfront to avoid re-processing on next scan
-        for comment in unclassified:
-            _classified_comments.add(comment.get('id'))
+        comment_ids = [c.get('id') for c in unclassified]
+        for comment_id in comment_ids:
+            _classified_comments.add(comment_id)
 
         # Merge multiple new comments into one string for a single LLM call
         parts = []
@@ -1066,6 +1299,19 @@ def _scan_comments_for_followup(sdk=None):
             'info', sdk,
         )
 
+        if needs_followup is None:
+            # The classifier could not run (LLM failure or an empty reply).
+            # That is not a "no": un-consume the comments so the next scan
+            # retries them instead of dropping the follow-up silently.
+            for comment_id in comment_ids:
+                _classified_comments.discard(comment_id)
+            _log(
+                f'Task {task_id}: follow-up classification unavailable '
+                f'({len(comment_ids)} comment(s)), will retry on the next scan',
+                'warning', sdk,
+            )
+            continue
+
         if not needs_followup:
             continue
 
@@ -1095,62 +1341,164 @@ def _scan_comments_for_followup(sdk=None):
             ))
             notify_author = ', '.join(authors) if authors else _get_owner_name()
 
-        _notify_agent_followup(
+        notified = _notify_agent_followup(
             assignee, task, merged_content, channel_type, sdk,
             prior_content=prior_content, comment_author=notify_author,
         )
+        if not notified:
+            # Un-consume the comments so a later scan can retry.  The task stays
+            # reopened on purpose: an in-progress task whose agent was never
+            # notified is what the stale-task scan exists to pick up.
+            for comment_id in comment_ids:
+                _classified_comments.discard(comment_id)
 
 
-def _setup_scheduler():
+_scheduler_setup_lock = threading.Lock()
+_scheduler_setup_done = False
+
+
+def _scheduler_is_running(scheduler) -> bool:
+    """True only when the host APScheduler instance is actually running."""
+    try:
+        if not getattr(scheduler, '_started', False):
+            return False
+        from apscheduler.schedulers.base import STATE_RUNNING
+        return getattr(scheduler._scheduler, 'state', None) == STATE_RUNNING
+    except Exception:
+        return False
+
+
+def _interval_seconds(trigger_config) -> 'int | None':
+    """Extract the interval in seconds from a persisted trigger config."""
+    try:
+        if isinstance(trigger_config, dict):
+            return int(trigger_config.get('seconds'))
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
+def _ensure_schedule(name: str, interval: int, event_name: str, sdk=None):
+    """Register or refresh one plugin schedule without disturbing live jobs.
+
+    Safety rules:
+
+    * non-destructive -- an existing schedule row is never cancelled/deleted;
+    * idempotent -- a row that already has the right interval is reused as-is,
+      so its id, run_count and schedule_logs are preserved;
+    * running-only -- rows are only mutated when the host scheduler is running,
+      so a short-lived process cannot disarm the live server.
+
+    Returns the schedule id, or None when nothing could be resolved.
+    """
+    try:
+        from backend.scheduler import scheduler
+    except Exception as exc:
+        _log(f'Scheduler unavailable, skipping {name} setup: {exc}', 'warn', sdk)
+        return None
+
+    running = _scheduler_is_running(scheduler)
+
+    existing = None
+    try:
+        for s in scheduler.list_schedules(owner_type='plugin', owner_id=PLUGIN_ID):
+            if s.get('name') == name:
+                existing = s
+                break
+    except Exception as exc:
+        _log(f'Failed to list schedules for {name}: {exc}', 'error', sdk)
+        return None
+
+    if existing is not None:
+        schedule_id = existing['id']
+        current = _interval_seconds(existing.get('trigger_config'))
+        if current != interval:
+            if running:
+                # In-place update: keeps the schedule id, run_count and logs.
+                scheduler.update_schedule(schedule_id, trigger_config={'seconds': interval})
+            else:
+                # Not our scheduler to drive: persist the new interval only, so
+                # the next start picks it up from the DB. Never touch live jobs.
+                from models.db import db as _db
+                _db.update_schedule(schedule_id, trigger_config={'seconds': interval})
+            _log(
+                f'Schedule {name} interval updated ({current}s -> {interval}s, id: {schedule_id})',
+                'info', sdk,
+            )
+        elif not running:
+            _log(
+                f'Scheduler not running -- leaving schedule {name} ({schedule_id}) untouched',
+                'info', sdk,
+            )
+        if running and not existing.get('enabled'):
+            scheduler.toggle_schedule(schedule_id)
+            _log(f'Schedule {name} re-enabled (id: {schedule_id})', 'info', sdk)
+    else:
+        sched = scheduler.create_schedule(
+            name=name,
+            owner_type='plugin',
+            owner_id=PLUGIN_ID,
+            trigger_type='interval',
+            trigger_config={'seconds': interval},
+            action_type='emit_event',
+            action_config={'event_name': event_name, 'payload': {}},
+        )
+        schedule_id = sched['id']
+        _log(f'Scheduler job registered (interval: {interval}s, id: {schedule_id})', 'info', sdk)
+
+    if running:
+        # Verify the job really landed in the live scheduler instead of
+        # silently no-oping (the failure mode this guard exists to prevent).
+        try:
+            if scheduler._scheduler.get_job(schedule_id) is None:
+                _log(
+                    f'Schedule {name} ({schedule_id}) is missing from the running scheduler',
+                    'error', sdk,
+                )
+        except Exception:
+            pass
+    return schedule_id
+
+
+def _setup_scheduler(sdk=None):
+    """Ensure the periodic todo-task scanner schedule exists."""
     global _scanner_schedule_id
-    try:
-        from backend.scheduler import scheduler
-        config = _load_config()
-        interval = int(config.get('SCAN_INTERVAL_SECONDS', 300))
-
-        for s in scheduler.list_schedules(owner_type='plugin', owner_id=PLUGIN_ID):
-            if s['name'] == _SCHEDULE_NAME:
-                scheduler.cancel_schedule(s['id'])
-
-        sched = scheduler.create_schedule(
-            name=_SCHEDULE_NAME,
-            owner_type='plugin',
-            owner_id=PLUGIN_ID,
-            trigger_type='interval',
-            trigger_config={'seconds': interval},
-            action_type='emit_event',
-            action_config={'event_name': 'kanban_scan', 'payload': {}},
-        )
-        _scanner_schedule_id = sched['id']
-        _log(f'Scheduler job registered (interval: {interval}s, id: {_scanner_schedule_id})')
-    except Exception as e:
-        _log(f'Failed to set up scheduler: {e}', 'error')
+    config = _load_config()
+    interval = int(config.get('SCAN_INTERVAL_SECONDS', 300))
+    schedule_id = _ensure_schedule(_SCHEDULE_NAME, interval, 'kanban_scan', sdk)
+    if schedule_id:
+        _scanner_schedule_id = schedule_id
 
 
-def _setup_stale_scheduler():
+def _setup_stale_scheduler(sdk=None):
+    """Ensure the stale in-progress task scanner schedule exists."""
     global _stale_scanner_schedule_id
+    config = _load_config()
+    interval = int(config.get('STALE_SCAN_INTERVAL_SECONDS', 60))
+    schedule_id = _ensure_schedule(_STALE_SCHEDULE_NAME, interval, 'kanban_stale_scan', sdk)
+    if schedule_id:
+        _stale_scanner_schedule_id = schedule_id
+
+
+def on_enable(sdk=None):
+    """Lifecycle hook: register the scanner schedules once the host app is up.
+
+    Deliberately NOT executed at import time. Most processes that construct a
+    PluginManager (including read-only CLI commands) import this handler, and a
+    module-level cancel+recreate used to delete the schedule rows tracked by the
+    live server: its APScheduler kept firing jobs for the deleted ids, every
+    call was a no-op, and the auto-trigger stayed dead until the next restart.
+    """
+    global _scheduler_setup_done
+    with _scheduler_setup_lock:
+        if _scheduler_setup_done:
+            return
+        _scheduler_setup_done = True
     try:
-        from backend.scheduler import scheduler
-        config = _load_config()
-        interval = int(config.get('STALE_SCAN_INTERVAL_SECONDS', 60))
-
-        for s in scheduler.list_schedules(owner_type='plugin', owner_id=PLUGIN_ID):
-            if s['name'] == _STALE_SCHEDULE_NAME:
-                scheduler.cancel_schedule(s['id'])
-
-        sched = scheduler.create_schedule(
-            name=_STALE_SCHEDULE_NAME,
-            owner_type='plugin',
-            owner_id=PLUGIN_ID,
-            trigger_type='interval',
-            trigger_config={'seconds': interval},
-            action_type='emit_event',
-            action_config={'event_name': 'kanban_stale_scan', 'payload': {}},
-        )
-        _stale_scanner_schedule_id = sched['id']
-        _log(f'Stale scheduler registered (interval: {interval}s, id: {_stale_scanner_schedule_id})')
-    except Exception as e:
-        _log(f'Failed to set up stale scheduler: {e}', 'error')
+        _setup_scheduler(sdk)
+        _setup_stale_scheduler(sdk)
+    except Exception as exc:
+        _log(f'Failed to set up kanban schedules: {exc}', 'error', sdk)
 
 
 # ─── Autopilot slash command ──────────────────────────────────────────────────
@@ -1372,6 +1720,11 @@ def _state_handler(agent_id: str, session_id: str, agent_state, label: str, data
                 return {
                     'result': 'error',
                     'message': f"Cannot activate task '{task_id}' — task is archived.",
+                }
+            if not task.get('assignee'):
+                return {
+                    'result': 'error',
+                    'message': f"Cannot activate task '{task_id}' — assign it before starting it.",
                 }
             if task.get('status') not in ('in-progress', 'done'):
                 # Auto-promote to in-progress on activation (no separate kanban_update_status call needed)
@@ -1979,8 +2332,7 @@ def on_schedule_fired(event, sdk):
     """Route scheduled events to the appropriate scan function."""
     if event.get('owner_type') != 'plugin' or event.get('owner_id') != PLUGIN_ID:
         return
-    if _notifier_paused:
-        _log('Notifier is paused — skipping scheduled scan', 'info', sdk)
+    if _skip_if_notifier_paused('scheduled scan', sdk):
         return
     if event.get('name') == _STALE_SCHEDULE_NAME:
         _scan_stale_tasks(sdk)
@@ -1995,6 +2347,9 @@ def on_tool_executed(event, sdk):
     agent_id = event.get('agent_id', '')
     if not agent_id:
         return
+
+    # Flash the title of the task this agent is working on (throttled inside).
+    _emit_task_activity(agent_id, tool_name)
 
     # ── kanban_add_comment: re-arm progress reminder ──────────────────────────
     if tool_name == 'kanban_add_comment':
@@ -2028,6 +2383,8 @@ def on_tool_executed(event, sdk):
                     _active_tasks[agent_id] = str(task_id)
                     _task_state_since[agent_id] = time.time()
                 _progress_reminder_armed[agent_id] = False
+            # Flash the newly activated task on the board right away.
+            _emit_task_activity(agent_id, tool_name, task_id=task_id)
             _log(f'Guard cleared for agent {agent_id} — task activated', 'info', sdk)
 
         elif task_status == 'paused':
@@ -2073,6 +2430,22 @@ def on_tool_executed(event, sdk):
         if not event.get('has_error', False):
             with _state_lock:
                 _progress_reminder_armed[agent_id] = True
+
+
+def on_tool_call_started(event, sdk):
+    """Start the task-title flash on the board the moment a tool is invoked."""
+    agent_id = event.get('agent_id', '')
+    if not agent_id:
+        return
+    _emit_task_activity(agent_id, event.get('tool_name', ''))
+
+
+def on_turn_complete(event, sdk):
+    """End the task-title flash when the agent finishes its turn."""
+    agent_id = event.get('agent_id', '')
+    if not agent_id:
+        return
+    _emit_task_idle(agent_id)
 
 
 
@@ -2177,8 +2550,8 @@ except Exception:
     pass
 
 # ─── Register scheduler jobs when module is loaded ───────────────────────────
-_setup_scheduler()
-_setup_stale_scheduler()
+# Scheduler jobs are registered from the on_enable() lifecycle hook below,
+# never at import time (see the safety note on _ensure_schedule).
 
 # ─── CLI Command Handlers ──────────────────────────────────────────────────────
 

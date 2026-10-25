@@ -140,6 +140,10 @@ def _emergency_compact_messages(messages: list, llm, llm_lock: threading.Lock,
     """
     from models.db import db
     from backend.llm_client import strip_thinking_tags
+    from backend.agent_runtime.summary_compactor import (
+        compact_summary as _compact_summary,
+        MAX_SUMMARY_CHARS as _max_summary_chars,
+    )
 
     # --- 1. Separate system messages from conversation ---
     system_msgs = []
@@ -188,6 +192,7 @@ def _emergency_compact_messages(messages: list, llm, llm_lock: threading.Lock,
         "- Always keep user identity info (name, phone, contact, etc.)\n"
         "- Always keep unresolved issues and pending tasks\n"
         "- Use concise single-line bullet points\n"
+        f"- The rewritten summary MUST NOT exceed {_max_summary_chars} characters\n"
         "- Output ONLY the compacted summary, no explanation\n\n"
         f"## Existing Summary:\n{existing_summary_capped or '(none)'}\n\n"
         f"## Recent Conversation (last 5 exchanges):\n{recent_text_capped or '(none)'}\n\n"
@@ -226,6 +231,17 @@ def _emergency_compact_messages(messages: list, llm, llm_lock: threading.Lock,
         return None
 
     compacted_summary, _ = strip_thinking_tags(compacted_summary)
+
+    # Hard-cap the compacted summary so this emergency path obeys the same
+    # persisted-summary budget as the regular summarizer. Semantic compaction
+    # first, deterministic line-level pruning as the last resort.
+    compacted_summary = _compact_summary(
+        compacted_summary,
+        max_chars=_max_summary_chars,
+        llm=llm,
+        llm_lock=llm_lock,
+        focus_text=recent_text_capped,
+    )
 
     # --- 6. Persist compacted summary to DB ---
     try:

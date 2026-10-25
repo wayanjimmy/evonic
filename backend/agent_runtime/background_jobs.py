@@ -26,6 +26,7 @@ import logging
 import threading
 import time
 import re
+import shlex
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
@@ -46,6 +47,7 @@ class BackgroundJob:
     started_at: float
     kind: str = "wrapper"            # wrapper | tmux | screen | nohup
     pgrep_pattern: str = ""          # nohup fallback when no PID file
+    backend_ctx: Optional[dict] = None  # spawn-time sandbox snapshot (see snapshot_backend_ctx)
     status: str = "running"          # running | done | timeout
     exit_code: Optional[int] = None
     finished_at: Optional[float] = None
@@ -61,7 +63,8 @@ class BackgroundJobRegistry:
 
     def register(self, session_id: str, session_name: str, log_file: str,
                  pid_file: str, command: str, kind: str = "wrapper",
-                 pgrep_pattern: str = "") -> BackgroundJob:
+                 pgrep_pattern: str = "",
+                 backend_ctx: Optional[dict] = None) -> BackgroundJob:
         with self._guard:
             dedup_key = session_name or pgrep_pattern or command
             for j in self._jobs.values():
@@ -79,6 +82,7 @@ class BackgroundJobRegistry:
                 started_at=time.time(),
                 kind=kind,
                 pgrep_pattern=pgrep_pattern,
+                backend_ctx=backend_ctx,
             )
             self._jobs[job.job_id] = job
             self._prune_finished(session_id)
@@ -122,9 +126,60 @@ class BackgroundJobRegistry:
         with self._guard:
             return [j for j in self._jobs.values() if j.session_id == session_id]
 
+    def stop_for_session(self, session_id: str, runner) -> List[str]:
+        """Stop detached jobs owned by one session via its execution backend."""
+        jobs = self.running_for_session(session_id)
+        if not jobs:
+            return []
+        commands = []
+        for job in jobs:
+            if job.kind == "tmux" and job.session_name:
+                commands.append(f"tmux kill-session -t {shlex.quote(job.session_name)} 2>/dev/null || true")
+            elif job.kind == "screen" and job.session_name:
+                commands.append(f"screen -S {shlex.quote(job.session_name)} -X quit 2>/dev/null || true")
+            elif job.pid_file:
+                pid = shlex.quote(job.pid_file)
+                commands.append(
+                    f"if [ -s {pid} ]; then p=$(cat {pid}); kill -- -$p 2>/dev/null || kill $p 2>/dev/null || true; "
+                    f"sleep 0.1; kill -9 -- -$p 2>/dev/null || kill -9 $p 2>/dev/null || true; fi")
+            elif job.pgrep_pattern:
+                commands.append(f"pkill -f -- {shlex.quote(job.pgrep_pattern)} 2>/dev/null || true")
+        try:
+            result = runner("\n".join(commands))
+        except Exception:
+            _logger.exception("[bgjob] failed stopping session %s", session_id)
+            return []
+        if result and result.get("error"):
+            return []
+        for job in jobs:
+            self.mark_finished(job.job_id, "stopped", None)
+        return [job.job_id for job in jobs]
+
 
 # Singleton
 background_jobs = BackgroundJobRegistry()
+
+
+# agent_context fields that determine WHICH execution backend/sandbox
+# registry.get_backend() resolves. A monitor's poll tick runs later from the
+# scheduler with only agent_id in hand and rebuilds the agent from the DB —
+# but is_subagent/is_explorer/agent_name are runtime-only and the resolved
+# `workspace` (e.g. a sub-agent scratchpad) isn't the raw DB column. A mismatch
+# makes get_backend RECREATE the session's container/keeper mid-run — destroying
+# the very tmux/nohup process being watched and yielding a bogus "finished".
+# Snapshotting these at spawn time lets the poll resolve the IDENTICAL sandbox.
+_BACKEND_CTX_KEYS = (
+    "sandbox_enabled", "workplace_id", "workspace",
+    "is_subagent", "is_explorer", "run_as_user",
+)
+
+
+def snapshot_backend_ctx(agent: dict) -> dict:
+    """Capture the backend-identity fields from a live agent_context."""
+    agent = agent or {}
+    snap = {k: agent.get(k) for k in _BACKEND_CTX_KEYS}
+    snap["agent_name"] = agent.get("agent_name") or agent.get("name") or ""
+    return snap
 
 
 def parse_wrapper_script(script: str) -> Optional[dict]:

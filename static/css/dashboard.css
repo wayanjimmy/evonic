@@ -1,0 +1,72 @@
+/* Dashboard: one stat strip, "needs attention", and cards in the same language as the rest of the app */
+:root { --dash-line: #d5dbe4; --dash-surface: #fff; --dash-soft: #f6f8fb; }
+html.dark { --dash-line: rgb(148 163 184 / .2); --dash-surface: rgb(17 24 39); --dash-soft: rgb(148 163 184 / .06); }
+
+/* stat strip */
+.dash-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .625rem; margin-bottom: 1rem; }
+@media (min-width: 640px) { .dash-stats { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@media (min-width: 1280px) { .dash-stats { grid-template-columns: repeat(7, minmax(0, 1fr)); gap: .75rem; } }
+.dash-stat { display: flex; align-items: center; gap: .75rem; min-width: 0; padding: .75rem .875rem; border: 1px solid var(--dash-line); border-radius: .875rem; background: var(--dash-surface); text-decoration: none; color: inherit; transition: border-color .15s, background-color .15s; }
+a.dash-stat:hover { border-color: #818cf8; background: rgb(99 102 241 / .05); }
+.dash-stat-ic { flex: none; width: 2.25rem; height: 2.25rem; display: inline-flex; align-items: center; justify-content: center; border-radius: .625rem; }
+.dash-stat-ic svg { width: 17px; height: 17px; }
+.dash-stat-tx { min-width: 0; }
+.dash-stat-v { font-size: 1.375rem; font-weight: 700; line-height: 1.1; color: #111827; font-variant-numeric: tabular-nums; }
+html.dark .dash-stat-v { color: #f8fafc; }
+.dash-of { font-size: .875rem; font-weight: 500; color: #94a3b8; }
+.dash-stat-l { margin-top: .125rem; font-size: .6875rem; font-weight: 500; color: #64748b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+html.dark .dash-stat-l { color: #94a3b8; }
+.dash-stat-s { font-size: .625rem; color: #94a3b8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: .875rem; }
+.dash-skel { display: inline-block; width: 2rem; height: 1.25rem; border-radius: .375rem; background: rgb(148 163 184 / .25); animation: dash-pulse 1.2s ease-in-out infinite; vertical-align: middle; }
+@keyframes dash-pulse { 50% { opacity: .45; } }
+.dash-t-blue { background: #dbeafe; color: #1d4ed8; } .dash-t-green { background: #dcfce7; color: #15803d; } .dash-t-orange { background: #ffedd5; color: #c2410c; }
+.dash-t-purple { background: #f3e8ff; color: #7e22ce; } .dash-t-teal { background: #ccfbf1; color: #0f766e; } .dash-t-violet { background: #ede9fe; color: #6d28d9; } .dash-t-sky { background: #e0f2fe; color: #0369a1; }
+html.dark .dash-t-blue { background: rgb(59 130 246 / .18); color: #93c5fd; } html.dark .dash-t-green { background: rgb(34 197 94 / .18); color: #86efac; } html.dark .dash-t-orange { background: rgb(249 115 22 / .18); color: #fdba74; }
+html.dark .dash-t-purple { background: rgb(168 85 247 / .2); color: #d8b4fe; } html.dark .dash-t-teal { background: rgb(20 184 166 / .18); color: #5eead4; } html.dark .dash-t-violet { background: rgb(139 92 246 / .2); color: #c4b5fd; } html.dark .dash-t-sky { background: rgb(14 165 233 / .18); color: #7dd3fc; }
+
+/* needs attention */
+.dash-attn { margin-bottom: 1rem; }
+.dash-attn.hidden { display: none; }
+.dash-attn-h { display: flex; align-items: center; gap: .5rem; margin-bottom: .5rem; }
+.dash-attn-h h3 { margin: 0; font-size: .6875rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #64748b; }
+html.dark .dash-attn-h h3 { color: #94a3b8; }
+.dash-attn-n { padding: 0 .4375rem; border-radius: 9999px; background: rgb(245 158 11 / .18); color: #b45309; font-size: .6875rem; font-weight: 700; }
+html.dark .dash-attn-n { color: #fcd34d; }
+.dash-attn-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: .5rem; }
+@media (min-width: 1024px) { .dash-attn-list { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+a.ag-alert { text-decoration: none; margin-bottom: 0; transition: filter .15s; }
+a.ag-alert:hover { filter: brightness(.97); }
+html.dark a.ag-alert:hover { filter: brightness(1.12); }
+.dash-attn-list .ag-alert-body { align-self: center; }
+.dash-attn-list .ag-alert-s { overflow-wrap: anywhere; }
+
+/* cards */
+.dash-card { border: 1px solid var(--dash-line); border-radius: .875rem; background: var(--dash-surface); overflow: hidden; min-width: 0; }
+.dash-card-h { padding: .875rem 1.25rem; border-bottom: 1px solid var(--dash-line); }
+.dash-card-h h3 { font-size: .9375rem !important; font-weight: 600 !important; }
+#middle-col .dash-card { flex: 1 1 auto; }
+html:not(.dark) .dash-card .divide-y > * + * { border-color: var(--dash-line); }
+.dash-row-sub { color: #94a3b8; }
+
+/* agents list */
+.dash-chip { display: inline-block; max-width: 11rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: .0625rem .5rem; border-radius: .5rem; background: rgb(148 163 184 / .14); color: #64748b; font: .6875rem/1rem ui-monospace, SFMono-Regular, Menlo, monospace; }
+html.dark .dash-chip { color: #94a3b8; }
+.dash-meta { display: inline-flex; gap: .5rem; font-size: .75rem; color: #94a3b8; white-space: nowrap; }
+.dash-off { padding: 0 .4375rem; border-radius: 9999px; background: rgb(148 163 184 / .2); color: #64748b; font-size: .625rem; font-weight: 600; }
+.dash-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+
+/* plugin feature cards (token usage, kanban) */
+.dash-feature { padding: 1rem 1.25rem; }
+.dash-feature-v { font-size: 1.75rem; font-weight: 700; line-height: 1.1; color: #111827; font-variant-numeric: tabular-nums; }
+html.dark .dash-feature-v { color: #f8fafc; }
+.dash-feature-d { margin-top: .25rem; font-size: .75rem; color: #64748b; }
+html.dark .dash-feature-d { color: #94a3b8; }
+.dash-spark { display: block; width: 100%; height: 3rem; margin-top: .75rem; overflow: visible; }
+.dash-spark .bar { fill: rgb(99 102 241 / .35); }
+.dash-spark .bar.is-last { fill: #6366f1; }
+html.dark .dash-spark .bar { fill: rgb(129 140 248 / .35); }
+html.dark .dash-spark .bar.is-last { fill: #818cf8; }
+.dash-spark-axis { display: flex; justify-content: space-between; margin-top: .25rem; font-size: .625rem; color: #94a3b8; }
+
+/* model distribution */
+.dash-share { font-size: .75rem; color: #94a3b8; flex: none; font-variant-numeric: tabular-nums; }

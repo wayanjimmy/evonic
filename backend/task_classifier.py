@@ -204,11 +204,38 @@ def _get_classifier_client(setting_key: str = 'task_classifier_model_id') -> LLM
         if model_id:
             model = db.get_model_by_id(model_id)
             if model:
+                fallback_model = _global_fallback_model()
+                if fallback_model:
+                    return LLMClient(model_config=model,
+                                     fallback_model_config=fallback_model)
                 return LLMClient(model_config=model)
             _logger.warning("Classifier model_id '%s' not found, falling back to default", model_id)
     except Exception as e:
         _logger.warning("Could not load classifier model config: %s", e)
+    fallback_model = _global_fallback_model()
+    if fallback_model:
+        return LLMClient(fallback_model_config=fallback_model)
     return LLMClient()
+
+
+def _global_fallback_model() -> Optional[dict]:
+    """Return the system-wide fallback model row, or None when unset.
+
+    Generic LLM callers (classifiers, CMP) have no per-agent fallback, so they
+    share the default_model_fallback_id setting.  LLMClient resolves that on
+    its own for the default model; passing it explicitly also covers
+    classifiers pinned to a specific model, which would otherwise have no
+    failover at all.
+    """
+    try:
+        from models.db import db
+        fallback_id = db.get_setting('default_model_fallback_id', '')
+        if not fallback_id:
+            return None
+        return db.get_model_by_id(fallback_id)
+    except Exception as e:
+        _logger.warning('Could not load global fallback model: %s', e)
+        return None
 
 
 def _is_enabled() -> bool:
@@ -349,7 +376,20 @@ def classify_task(user_message: str) -> str:
         _logger.info("Task classified as %s (heuristic)", result)
         return result
 
-    # LLM classification
+    # An enabled Decision Profile replaces the legacy classifier only after its
+    # structured result has passed the shared runtime checks.  ``None`` means
+    # disabled, missing, shadow, low-confidence, malformed, timed-out, or failed
+    # and deliberately falls through to the historic classifier below.
+    try:
+        from backend.agent_decisions import get_builtin_decision_runner, task_complexity_input
+        decision = get_builtin_decision_runner().decide(
+            "agent.task_complexity", task_complexity_input(text))
+        if decision and decision.get("complexity") in {"trivial", "complex"}:
+            return decision["complexity"]
+    except Exception:
+        _logger.debug("Decision Profile task complexity unavailable; using legacy classifier", exc_info=True)
+
+    # Legacy LLM classification.
     try:
         client = _get_classifier_client()
         _t0 = time.time()

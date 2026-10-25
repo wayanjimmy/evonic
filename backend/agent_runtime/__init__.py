@@ -167,9 +167,18 @@ def _send_free_notification(agent_id: str):
 
     from models.db import db
     notify_msg = "Hey! I'm done and ready to help again. Is there anything I can do?"
+    message_id = None
     try:
-        db.add_chat_message(session_id, 'assistant', notify_msg,
-                            agent_id=agent_id, metadata={"free_notification": True})
+        message_id = db.add_chat_message(
+            session_id, 'assistant', notify_msg,
+            agent_id=agent_id, metadata={"free_notification": True},
+        )
+        message_id = message_id if type(message_id) in (int, str) else None
+        from models.chatlog import chatlog_manager
+        chatlog_manager.get(agent_id, session_id).append({
+            'type': 'final', 'session_id': session_id, 'content': notify_msg,
+            'metadata': {'free_notification': True}, 'message_id': message_id,
+        })
     except Exception as e:
         log.error("[AgentFreeNotify] Failed to save notification message: %s", e)
 
@@ -181,6 +190,10 @@ def _send_free_notification(agent_id: str):
             'session_id': session_id,
             'external_user_id': external_user_id,
             'channel_id': channel_id,
+            'message': notify_msg,
+            'message_id': message_id,
+            'metadata': {"free_notification": True},
+            'role': 'assistant',
         })
     except Exception as e:
         log.error("[AgentFreeNotify] Failed to emit message_received event: %s", e)
@@ -266,6 +279,16 @@ try:
     event_stream.on('final_answer', _on_final_answer)
 except Exception:
     pass
+
+
+# Periodic orphan sweeper for abandoned agent-template simulations.  Runs once
+# at start (covering a crash since the previous boot) then on an interval,
+# reaping stray /tmp/evonic_agent_template_simulation/* trees.
+try:
+    from backend.agent_runtime.simulation_runtime import start_orphan_sweeper
+    start_orphan_sweeper()
+except Exception:
+    log.warning("simulation orphan sweeper failed to start", exc_info=True)
 
 
 __all__ = ['AgentRuntime', 'agent_runtime', 'DEFAULT_SUMMARIZE_PROMPT']

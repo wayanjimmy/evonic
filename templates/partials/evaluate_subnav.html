@@ -1,44 +1,23 @@
 <div class="evaluate-subnav">
-    <a href="/evaluate" class="subnav-link {{ 'subnav-active' if request.path == '/evaluate' else '' }}">Runner</a>
-    <a href="/evaluate/domains" class="subnav-link {{ 'subnav-active' if request.path == '/evaluate/domains' else '' }}">Domains</a>
-    <a href="/evaluate/evaluators" class="subnav-link {{ 'subnav-active' if request.path == '/evaluate/evaluators' else '' }}">Evaluators</a>
-    <a href="/evaluate/settings" class="subnav-link {{ 'subnav-active' if request.path == '/evaluate/settings' else '' }}">Settings</a>
-    <a href="/history" class="subnav-link {{ 'subnav-active' if request.path == '/history' else '' }}">History</a>
+    <a href="/evaluate" class="subnav-link {{ 'subnav-active' if request.path == '/evaluate' else '' }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m10 8 6 4-6 4z"/></svg><span>Runner</span></a>
+    <a href="/evaluate/domains" class="subnav-link {{ 'subnav-active' if request.path == '/evaluate/domains' else '' }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 2 10 5-10 5L2 7z"/><path d="m2 12 10 5 10-5"/><path d="m2 17 10 5 10-5"/></svg><span>Domains</span></a>
+    <a href="/evaluate/evaluators" class="subnav-link {{ 'subnav-active' if request.path == '/evaluate/evaluators' else '' }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg><span>Evaluators</span></a>
+    <a href="/evaluate/settings" class="subnav-link {{ 'subnav-active' if request.path == '/evaluate/settings' else '' }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3M14 2v4M8 10v4M16 18v4"/></svg><span>Settings</span></a>
+    <a href="/history" class="subnav-link {{ 'subnav-active' if request.path == '/history' else '' }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg><span>History</span></a>
 </div>
 
 <style>
-.evaluate-subnav {
-    display: flex;
-    gap: 0;
-    margin-bottom: 20px;
-    border-bottom: 2px solid #e5e7eb;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-}
-
-.subnav-link {
-    color: #6b7280;
-    padding: 10px 20px;
-    font-size: 15px;
-    border-bottom: 2px solid transparent;
-    margin-bottom: -2px;
-    text-decoration: none;
-    white-space: nowrap;
-    transition: color 0.2s, border-color 0.2s;
-}
-
-.subnav-link:hover {
-    color: #3B82F6;
-}
-
-.subnav-link.subnav-active {
-    color: #3B82F6;
-    border-bottom-color: #3B82F6;
-    font-weight: 500;
-}
-
-html.dark .evaluate-subnav { border-bottom-color: #334155; }
+.evaluate-subnav { display: inline-flex; gap: .25rem; max-width: 100%; margin-bottom: 1.25rem; padding: .25rem; border-radius: 9999px;
+    background: rgb(148 163 184 / .12); border: 1px solid rgb(148 163 184 / .2); overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.evaluate-subnav::-webkit-scrollbar { display: none; }
+.subnav-link { display: inline-flex; align-items: center; gap: .5rem; padding: .5rem 1.125rem; border-radius: 9999px; font-size: .875rem; font-weight: 500; color: #64748b;
+    text-decoration: none; white-space: nowrap; transition: color .15s, background-color .15s; }
+.subnav-link svg { width: 16px; height: 16px; flex: none; }
+.subnav-link:hover { color: #111827; background: rgb(148 163 184 / .16); }
+.subnav-link.subnav-active { background: #fff; color: #4f46e5; font-weight: 600; box-shadow: 0 1px 2px rgb(15 23 42 / .08), 0 1px 1px rgb(15 23 42 / .04); }
+.subnav-link:focus-visible { outline: 2px solid #818cf8; outline-offset: 2px; }
 html.dark .subnav-link { color: #94a3b8; }
-html.dark .subnav-link:hover { color: #60a5fa; }
-html.dark .subnav-link.subnav-active { color: #60a5fa; border-bottom-color: #60a5fa; }
+html.dark .subnav-link:hover { color: #f1f5f9; background: rgb(148 163 184 / .14); }
+html.dark .subnav-link.subnav-active { background: rgb(99 102 241 / .22); color: #c7d2fe; box-shadow: none; }
+@media (max-width: 639.98px) { .evaluate-subnav { display: flex; } .subnav-link { flex: 1 0 auto; justify-content: center; padding: .5rem .875rem; } }
 </style>

@@ -176,7 +176,7 @@ def attach(agent: dict, target: dict, when: dict, note: str = "",
            expires_in: int = _DEFAULT_EXPIRES) -> dict:
     """Create a monitor. Returns {'monitor_id', ...} or {'error': ...}."""
     from backend.agent_runtime.background_jobs import (
-        background_jobs, build_manual_status_script)
+        background_jobs, build_manual_status_script, snapshot_backend_ctx)
     from backend.tools.lib.long_running_guard import build_status_scripts
     from backend.scheduler import scheduler
 
@@ -278,6 +278,12 @@ def attach(agent: dict, target: dict, when: dict, note: str = "",
         "note": (note or "")[:500],
         "probe_script": probe,
         "deadline_ts": time.time() + expires_in,
+        # Sandbox identity for the poll ticks: prefer the spawn-time snapshot
+        # kept on the job; otherwise snapshot the live agent. run_monitor_poll
+        # overlays this on the DB-rebuilt agent so get_backend resolves the
+        # SAME sandbox the watched process runs in.
+        "backend_ctx": (job.backend_ctx if job_id else None)
+                       or snapshot_backend_ctx(agent),
     }
 
     try:
@@ -337,12 +343,20 @@ def list_for_session(agent_id: str, session_id: str) -> list:
         cfg = s.get("action_config") or {}
         if session_id and cfg.get("session_id") != session_id:
             continue
+        when = cfg.get("when") or {}
         out.append({
             "monitor_id": cfg.get("monitor_id") or f"mon-{s.get('id')}",
             "job_id": cfg.get("job_id") or None,
             "watching": cfg.get("command") or cfg.get("log_file") or "",
-            "condition": _describe(cfg.get("when") or {}),
+            "condition": _describe(when),
+            # Only expose the declarative condition, never the generated probe
+            # script or backend context that the scheduler executes internally.
+            "when": {
+                key: when[key] for key in _CONDITION_KEYS
+                if when.get(key) not in (None, False, "")
+            },
             "note": cfg.get("note") or "",
+            "interval_seconds": cfg.get("interval_seconds") or _DEFAULT_INTERVAL,
             "expires_in_seconds": max(0, int((cfg.get("deadline_ts") or now) - now)),
         })
     return out
@@ -397,15 +411,29 @@ def run_monitor_poll(action_config: dict) -> dict:
         return {"done": True, "state": "expired"}
 
     agent = db.get_agent(action_config.get("agent_id")) or {}
+    # Overlay the spawn-time sandbox snapshot (captured in attach) so
+    # get_backend resolves the SAME sandbox the watched process runs in —
+    # a workspace/identity mismatch would recreate the container mid-watch
+    # and report a bogus "finished".
+    agent = {**agent, **(action_config.get("backend_ctx") or {})}
+    agent.setdefault("id", action_config.get("agent_id"))
     try:
         backend = registry.get_backend(session_id, agent)
     except Exception as e:
         _logger.warning("[monitor] backend resolve failed: %s", e)
         return {"done": False, "state": "backend_error"}
 
+    # The shell predicate is agent-authored and may reference the agent's own
+    # variables (e.g. an API token), so expose them for that probe only. Status
+    # and log probes contain no agent-authored shell and stay env-free.
+    probe_env = {}
+    if when.get("shell"):
+        from backend.tools.lib.agent_env import build_agent_env
+        probe_env = build_agent_env(agent, action_config.get("agent_id") or "")
+
     try:
         res = backend.run_bash(action_config.get("probe_script") or "",
-                               _POLL_TIMEOUT, {})
+                               _POLL_TIMEOUT, probe_env)
     except Exception as e:
         _logger.warning("[monitor] probe failed: %s", e)
         return {"done": False, "state": "probe_error"}

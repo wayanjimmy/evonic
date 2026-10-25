@@ -10,9 +10,10 @@ from flask import Blueprint, render_template, jsonify, request, redirect
 from models.db import db
 from backend.plugin_manager import plugin_manager
 from backend.skills_manager import skills_manager
-from backend.skillsets import list_skillsets, count_skillsets
+
 from backend.setup import (run_setup, test_connection, PROVIDER_DEFAULTS,
-                            LANGUAGE_PRESETS, check_docker_available)
+                            LANGUAGE_PRESETS, DEFAULT_SUPER_AGENT_NAME,
+                            check_docker_available)
 import config
 
 dashboard_bp = Blueprint('dashboard', __name__)
@@ -83,12 +84,10 @@ def api_setup():
 
     # Legacy payload (backward compat): {id, name, description, system_prompt, model}
     from routes.agents import _ensure_kb_dir, _write_system_prompt
-    agent_id = data.get('id', '').strip().lower()
-    name = data.get('name', '').strip()
-    if not agent_id or not re.match(r'^[a-z0-9_]+$', agent_id):
+    name = (data.get('name') or '').strip() or DEFAULT_SUPER_AGENT_NAME
+    agent_id = (data.get('id') or '').strip().lower() or 'super_agent'
+    if not re.match(r'^[a-z0-9_]+$', agent_id):
         return jsonify({'error': 'Invalid ID. Use only lowercase alphanumeric characters and underscores (snake_case).'}), 400
-    if not name:
-        return jsonify({'error': 'Name is required.'}), 400
     if db.get_agent(agent_id):
         return jsonify({'error': 'Agent ID already exists.'}), 400
     sandbox_enabled = data.get('sandbox_enabled', check_docker_available().get('available', False))
@@ -157,7 +156,6 @@ def api_dashboard_data():
         model_usage = db.get_model_usage(_conn=conn)
 
     skill_stats = skills_manager.get_skill_stats()
-    skill_stats['skillset_count'] = count_skillsets()
 
     all_plugins = plugin_manager.list_plugins()
     plugin_stats = {
@@ -177,6 +175,17 @@ def api_dashboard_data():
     # Plugin-provided dashboard cards (zero core-plugin coupling)
     plugin_cards = plugin_manager.get_dashboard_cards()
 
+    # "Needs attention": invalid workspaces, overdue schedules, a very low latest evaluation
+    try:
+        from backend.dashboard_attention import build_attention
+        every_agent = db.get_recent_agents(limit=500)
+        attention = build_attention(
+            every_agent, all_schedules, recent_runs[0] if recent_runs else None,
+            workplace_type=lambda wid: (db.get_workplace(wid) or {}).get('type'),
+        )
+    except Exception:
+        attention = []
+
     return jsonify({
         'stats': stats,
         'recent_agents': recent_agents,
@@ -188,6 +197,7 @@ def api_dashboard_data():
         'schedule_stats': schedule_stats,
         'schedules': schedules,
         'plugin_cards': plugin_cards,
+        'attention': attention,
     })
 
 

@@ -156,28 +156,21 @@ function renderSidebar(agents) {
         if (_getUnreadSet().has(agent.id)) avatar.setAttribute('data-unread', 'true');
         avatar.setAttribute('title', agent.name);
 
-        if (agent.avatar_path) {
-            // Render custom avatar image
-            var img = document.createElement('img');
-            img.src = '/api/agents/' + encodeURIComponent(agent.id) + '/avatar?size=small';
-            img.alt = agent.name;
-            img.className = 'agent-avatar-img';
-            img.onerror = function () {
-                // Fallback to initial letter on load error
-                img.style.display = 'none';
-                var fallback = document.createElement('span');
-                fallback.textContent = agent.name.charAt(0).toUpperCase();
-                avatar.appendChild(fallback);
-                avatar.style.backgroundColor = _sidebarAvatarColor(agent.id);
-            };
-            avatar.appendChild(img);
-        } else {
-            // No custom avatar: show initial letter with colored background
+        // Always render the avatar image: the route serves the uploaded avatar, or an abstract one
+        // generated from the agent's name when none was uploaded.
+        var img = document.createElement('img');
+        img.src = '/api/agents/' + encodeURIComponent(agent.id) + '/avatar?size=small';
+        img.alt = agent.name;
+        img.className = 'agent-avatar-img';
+        img.onerror = function () {
+            // Fallback to initial letter on load error
+            img.style.display = 'none';
+            var fallback = document.createElement('span');
+            fallback.textContent = agent.name.charAt(0).toUpperCase();
+            avatar.appendChild(fallback);
             avatar.style.backgroundColor = _sidebarAvatarColor(agent.id);
-            var letter = document.createElement('span');
-            letter.textContent = agent.name.charAt(0).toUpperCase();
-            avatar.appendChild(letter);
-        }
+        };
+        avatar.appendChild(img);
 
         avatar.addEventListener('click', function () {
             // Mobile has no hover: first tap on an unread avatar shows the
@@ -696,6 +689,13 @@ function _applySidebarState() {
     if (!sidebar) return;
     var burger = document.getElementById('sidebar-toggle-btn');
 
+    // Desktop has no toggle button, so a collapsed state saved earlier must not hide the sidebar for good.
+    if (window.innerWidth >= 1024) {
+        sidebar.classList.remove('collapsed');
+        if (burger) burger.classList.remove('collapsed');
+        return;
+    }
+
     var collapsed;
     try {
         var saved = localStorage.getItem('evonic-sidebar-collapsed');
@@ -714,6 +714,11 @@ function _applySidebarState() {
         if (burger) burger.classList.add('collapsed');
     }
 }
+
+// Crossing into desktop width re-opens the sidebar (there is no toggle to do it there)
+window.addEventListener('resize', function () {
+    if (window.innerWidth >= 1024) _applySidebarState();
+});
 
 // Update selected ring when browser navigates back/forward (soft-switch uses pushState)
 window.addEventListener('popstate', _updateSelectedAvatar);

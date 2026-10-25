@@ -10,13 +10,18 @@ def read_base_template() -> str:
     return BASE_TEMPLATE.read_text(encoding="utf-8")
 
 
-def test_disconnect_banner_uses_same_tailwind_palette_in_both_themes():
+def test_disconnect_banner_uses_the_theme_aware_banner_component():
+    """The banner must not hard-code text colours (a fixed text-gray-800 became invisible on the dark tint);
+    light/dark tones come from the shared .ev-banner classes in style.css."""
     template = read_base_template()
     banner = template.split('id="wa-disconnect-banner"', 1)[1].split("</div>", 3)[0]
 
-    assert 'class="hidden bg-amber-50 border-b border-amber-200 text-gray-700"' in banner
-    assert "dark:" not in banner
+    assert 'class="hidden ev-banner ev-banner-warn"' in banner
+    assert "text-gray-" not in banner and "dark:" not in banner
+    assert "text-gray-" not in template.split("function updateDisconnectBanner", 1)[1].split("function updateWABadge", 1)[0]
     assert "style=\"display:none;background:#f59e0b" not in template
+    css = (Path(__file__).resolve().parent.parent / "static" / "style.css").read_text(encoding="utf-8")
+    assert ".ev-banner-warn" in css and "html.dark .ev-banner-warn" in css
 
 
 def test_disconnect_banner_normalizes_agent_detail_url():

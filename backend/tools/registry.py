@@ -12,10 +12,13 @@ import sys
 import glob
 import json
 import types
+import logging
 import threading
 import importlib
 import importlib.util
 from typing import Dict, Any, Optional, Callable, List
+
+_logger = logging.getLogger(__name__)
 
 # Directory containing tool backend Python files
 TOOLS_DIR = os.path.join(os.path.dirname(__file__))
@@ -64,6 +67,8 @@ class ToolRegistry:
         self._builtins['builtin:recall_sessions'] = _builtin_recall_sessions_factory
         # Tool to clear active fallback flag from agent_state (agent calls this)
         self._builtins['builtin:reset_active_model'] = _builtin_reset_active_model_factory
+        # Opt-in: lets the agent move itself between workplaces (agents.workplace_switch_enabled)
+        self._builtins['builtin:switch_workplace'] = _builtin_switch_workplace_factory
 
     def _compute_json_mtimes(self) -> Optional[tuple]:
         """Return a tuple of (path, mtime) for every tools/*.json file.
@@ -200,6 +205,14 @@ class ToolRegistry:
                         for tid in _assigned
                     )
                     if not _namespaced_match:
+                        _logger.warning(
+                            "Authorization guard blocked tool '%s' for agent '%s' "
+                            "(session=%s user=%s): tool is not in assigned_tool_ids",
+                            function_name,
+                            ctx.get('agent_id', '?'),
+                            ctx.get('session_id', '?'),
+                            ctx.get('user_id', '?'),
+                        )
                         return {
                             "error": (
                                 f"Tool '{function_name}' is not assigned to this agent. "
@@ -244,6 +257,10 @@ class ToolRegistry:
                 return {"error": f"Tool backend '{function_name}' missing execute() function"}
             # Propagate live flags from agent_context (e.g. _skip_safety set after approval)
             ctx['_skip_safety'] = agent_context.get('_skip_safety', False)
+            # switch_workplace moves the agent mid-turn: later tool calls must follow it.
+            ctx['workplace_id'] = agent_context.get('workplace_id')
+            if 'workspace' in agent_context:
+                ctx['workspace'] = agent_context.get('workspace')
             try:
                 return module.execute(ctx, arguments)
             except Exception as e:
@@ -261,6 +278,8 @@ class ToolRegistry:
         if builtin_id in ('builtin:switch_path', 'builtin:new_path',
                           'builtin:read_transcript', 'builtin:forget_memory'):
             return bool(agent_context.get('enable_cmp'))
+        if builtin_id == 'builtin:switch_workplace':
+            return bool(agent_context.get('workplace_switch_enabled'))
         return True
 
     def get_builtin_tool_defs(self, agent_context: Optional[dict] = None) -> List[Dict[str, Any]]:
@@ -329,6 +348,7 @@ class ToolRegistry:
         """
         tool_path = os.path.join(TOOLS_DIR, f"{tool_name}.py")
         skill_backend_dir = None
+        skill_owner = skill_id  # skill ID owning the resolved backend
         plugin_owner = None  # plugin_id owning the resolved backend
 
         # If skill_id is specified, search that skill first
@@ -340,6 +360,7 @@ class ToolRegistry:
                 skill_dir = skills_manager.find_tool_skill_dir(tool_name, skill_id=skill_id)
                 if skill_dir:
                     skill_backend_dir = os.path.join(skill_dir, 'backend')
+                    skill_owner = skill_id
             # Fall through to default search if not found in specified skill
         elif plugin_id:
             from backend.plugin_manager import plugin_manager
@@ -358,6 +379,7 @@ class ToolRegistry:
                 skill_dir = skills_manager.find_tool_skill_dir(tool_name)
                 if skill_dir:
                     skill_backend_dir = os.path.join(skill_dir, 'backend')
+                    skill_owner = os.path.basename(skill_dir)
             else:
                 from backend.plugin_manager import plugin_manager
                 p_path, p_owner = plugin_manager.find_plugin_tool_backend(tool_name)
@@ -369,8 +391,8 @@ class ToolRegistry:
         current_mtime = os.path.getmtime(tool_path)
         if plugin_owner:
             cache_key = f"{tool_name}:plugin:{plugin_owner}"
-        elif skill_id:
-            cache_key = f"{tool_name}:{skill_id}"
+        elif skill_owner:
+            cache_key = f"{tool_name}:skill:{skill_owner}"
         else:
             cache_key = tool_name
         cached = self._module_cache.get(cache_key)
@@ -382,18 +404,25 @@ class ToolRegistry:
             module = self._exec_plugin_tool_module(
                 plugin_owner, os.path.dirname(tool_path), tool_name, tool_path)
         elif skill_backend_dir:
-            # Skill tools: use a unique namespace (like plugin_tools_{plugin_id})
-            # so relative imports (from ._utils import ...) resolve against the
-            # skill's own backend/tools/ dir, not the main backend/tools/ package.
-            pkg_name = f"skill_tools_{skill_id}"
+            # Skill tools use backend as their package root, so relative imports
+            # can reach sibling packages such as ``..providers``.
+            pkg_name = f"skill_tools_{skill_owner.replace('-', '_')}"
             pkg = sys.modules.get(pkg_name)
             if pkg is None:
                 pkg = types.ModuleType(pkg_name)
                 pkg.__package__ = pkg_name
                 sys.modules[pkg_name] = pkg
-            pkg.__path__ = [os.path.dirname(tool_path)]
+            pkg.__path__ = [skill_backend_dir]
 
-            mod_name = f"{pkg_name}.{tool_name}"
+            tools_pkg_name = f"{pkg_name}.tools"
+            tools_pkg = sys.modules.get(tools_pkg_name)
+            if tools_pkg is None:
+                tools_pkg = types.ModuleType(tools_pkg_name)
+                tools_pkg.__package__ = tools_pkg_name
+                sys.modules[tools_pkg_name] = tools_pkg
+            tools_pkg.__path__ = [os.path.dirname(tool_path)]
+
+            mod_name = f"{tools_pkg_name}.{tool_name}"
             spec = importlib.util.spec_from_file_location(mod_name, tool_path)
             module = importlib.util.module_from_spec(spec)
             sys.modules[mod_name] = module
@@ -583,7 +612,13 @@ def _builtin_update_tasks_factory(agent_context: dict):
             "name": "update_tasks",
             "description": (
                 "Manage your implementation task list "
-                "(set, add, update status, remove). CRITICAL: Each entry must be "
+                "(set, add, update status, remove).\n"
+                "WHEN TO CALL (mandatory bookkeeping): 'set' the list before "
+                "starting multi-step work; 'in_progress' when you begin a task; "
+                "'done' the moment a task's work is finished — always BEFORE "
+                "giving your final answer. Never end a turn that did "
+                "implementation work without reconciling task statuses.\n"
+                "CRITICAL: Each entry must be "
                 "ATOMIC — exactly one concrete action or outcome that can be "
                 "completed independently. Split multi-action work into separate "
                 "entries; never batch several actions into one task.\n"
@@ -1535,3 +1570,85 @@ def _builtin_reset_active_model_factory(agent_context: dict):
             return {"error": f"Failed to reset active model: {str(e)}"}
 
     return tool_def, executor
+
+
+def _builtin_switch_workplace_factory(agent_context: dict):
+    """Factory for the opt-in 'switch_workplace' tool.
+
+    Exposed only when the agent has workplace_switch_enabled. Switching is
+    agent-wide (same as the chat header switcher) and takes effect for the
+    remaining tool calls of the current turn.
+    """
+    tool_def = {
+        "type": "function",
+        "function": {
+            "name": "switch_workplace",
+            "description": (
+                "Move yourself to another workplace (machine or environment where your "
+                "bash/file tools run). action='list' shows the workplaces you may use and "
+                "which one is current; action='switch' moves you to `workplace` (id or exact "
+                "name; 'local' for the local workspace). The switch is persistent and applies "
+                "to all your sessions, so switch only when the task needs that machine."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["list", "switch"]},
+                    "workplace": {"type": "string",
+                                  "description": "Workplace id or exact name (action='switch')."},
+                },
+                "required": ["action"],
+            },
+        },
+    }
+
+    def executor(arguments: dict) -> dict:
+        from models.db import db
+        from backend.workplaces import agent_switch
+
+        agent_id = agent_context.get('id', '')
+        agent = db.get_agent(agent_id) if agent_id else None
+        if not agent or not agent.get('workplace_switch_enabled'):
+            return {"error": "Workplace switching is not enabled for this agent."}
+        action = (arguments or {}).get('action')
+        if action == 'list':
+            return {"workplaces": agent_switch.list_options(agent)}
+        if action != 'switch':
+            return {"error": "action must be 'list' or 'switch'."}
+        target = (arguments or {}).get('workplace')
+        if not target:
+            return {"error": "workplace is required for action='switch'."}
+        result = agent_switch.switch(agent_id, str(target), note=False)
+        if not result.get('ok'):
+            return {"error": result.get('error')}
+        if result.get('changed'):
+            # Make the rest of this turn's tool calls run on the new workplace.
+            fresh = db.get_agent(agent_id) or {}
+            agent_context['workplace_id'] = fresh.get('workplace_id')
+            agent_context['workspace'] = _workspace_for(fresh)
+        out = {"result": result['message'], "workplace": result['workplace']}
+        if result.get('transition'):
+            # The chat UI splits the turn at this point and draws the "Workplace switched" divider.
+            out["workplace_switch"] = result['transition']
+        return out
+
+    return tool_def, executor
+
+
+def _workspace_for(agent: dict):
+    """Workspace dir for an agent row, mirroring runtime's per-turn resolution."""
+    import json
+    from models.db import db
+    wp_id = agent.get('workplace_id') or None
+    if wp_id:
+        wp = db.get_workplace(wp_id)
+        if wp:
+            try:
+                cfg = json.loads(wp.get('config') or '{}')
+            except (TypeError, ValueError):
+                cfg = {}
+            path = cfg.get('workspace_path') or None
+            if wp.get('type') == 'tunnel':
+                return path
+            return path or agent.get('workspace') or None
+    return agent.get('workspace') or None

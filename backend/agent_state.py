@@ -174,7 +174,8 @@ class AgentState:
                  plan_file: str = None, states: dict = None,
                  focus: bool = False, focus_reason: str = None,
                  auto_trivial: bool = False, atg: dict = None,
-                 cmp: dict = None, always_execute: bool = False):
+                 cmp: dict = None, always_execute: bool = False,
+                 active_goal: dict = None):
         self.mode = mode
         self.always_execute: bool = always_execute
         if self.always_execute:
@@ -199,6 +200,12 @@ class AgentState:
         # backend.agent_runtime.cmp when enable_cmp is on:
         # {version, active_id, next_id, paths: {P1: {...card+segments+snapshot}}, stats}
         self.cmp: dict | None = cmp
+        # Active session goal set by the `/goal` command (see backend.active_goal).
+        # Stored structurally (id/title/summary/raw_instruction) and rendered into
+        # the Agent State system message, so a bounded title + operational summary
+        # is re-injected every turn and survives history filtering and summary
+        # compaction without leaking the raw slash-command literal.
+        self.active_goal: dict | None = active_goal
 
     # ── Blocking ────────────────────────────────────────────────────────────
 
@@ -589,7 +596,8 @@ class AgentState:
     # ── Rendering ────────────────────────────────────────────────────────────
 
     def render(self, agent_id: str = None, atg_enabled: bool = False,
-               cmp_enabled: bool = False, agent_name: str = None) -> str:
+               cmp_enabled: bool = False, agent_name: str = None,
+               update_tasks_available: bool = True) -> str:
         """Render state as a markdown system message for LLM injection.
 
         Args:
@@ -600,6 +608,10 @@ class AgentState:
                       compile_task_graph() instead of a free-form save_plan().
             cmp_enabled: When True and cmp state exists, render the session
                       path map + cards section.
+            update_tasks_available: When False (e.g. the kanban skill
+                      suppresses builtin:update_tasks), omit any instruction
+                      to call update_tasks — never tell the model to use a
+                      tool it does not have.
         """
         if self.always_execute:
             mode_note = "execute — write tools are **allowed** (always_execute is on)"
@@ -636,6 +648,13 @@ class AgentState:
             reason_note = f" — {self.focus_reason}" if self.focus_reason else ""
             lines.append(f"**Focus**: active{reason_note} (messages from other sessions are rejected)")
 
+        if self.active_goal:
+            from backend.active_goal import render_active_goal_system_message
+            _goal_block = render_active_goal_system_message(self.active_goal)
+            if _goal_block:
+                lines.append("")
+                lines.append(_goal_block)
+
         plan_content = ""
         if self.plan_file:
             lines.append(f"**Plan file**: `{self.plan_file}`")
@@ -668,6 +687,12 @@ class AgentState:
         if self.tasks:
             lines.append("")
             lines.append("### Task List")
+            if update_tasks_available:
+                lines.append(
+                    "_Keep this list current: mark tasks done with "
+                    "update_tasks before finishing any turn where you "
+                    "completed work._"
+                )
             for t in self.tasks:
                 icon = STATUS_ICON.get(t.get("status"), "[ ]")
                 text = t.get("text") or "(no description)"
@@ -694,7 +719,7 @@ class AgentState:
                     "3 minutes.** Consider whether stuck. If blocked, switch to another "
                     "task or mark this one done."
                 )
-        else:
+        elif update_tasks_available:
             lines.append("")
             lines.append("_No tasks defined yet. Use update_tasks(action='set', tasks=[...]) to define your plan._")
 
@@ -797,6 +822,7 @@ class AgentState:
             "atg": self.atg,
             "cmp": self.cmp,
             "always_execute": self.always_execute,
+            "active_goal": self.active_goal,
         })
 
     @classmethod
@@ -816,6 +842,7 @@ class AgentState:
                 atg=obj.get("atg"),
                 cmp=obj.get("cmp"),
                 always_execute=obj.get("always_execute", False),
+                active_goal=obj.get("active_goal"),
             )
         except (json.JSONDecodeError, TypeError, AttributeError):
             return cls()

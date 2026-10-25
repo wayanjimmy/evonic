@@ -19,10 +19,11 @@ import config
 from models.db import db
 
 # ---------------------------------------------------------------------------
-# Platform default timezone
+# Platform defaults
 # ---------------------------------------------------------------------------
 
 DEFAULT_PLATFORM_TIMEZONE = "UTC"
+DEFAULT_SUPER_AGENT_NAME = "Super Agent"
 
 # ---------------------------------------------------------------------------
 # Provider defaults
@@ -357,13 +358,28 @@ _DEFAULT_SETTINGS = [
     ("max_concurrent_llm_global", "1"),
     ("agent_queue_workers", str(config.AGENT_QUEUE_WORKERS)),
     ("max_tool_iterations", str(config.AGENT_MAX_TOOL_ITERATIONS)),
+    ("max_goal_nudges", str(config.AGENT_MAX_GOAL_NUDGES)),
     ("agent_sidebar_limit", str(config.AGENT_SIDEBAR_LIMIT)),
     # --- Privacy & Guards ---
     ("public_history", "0"),
     ("long_running_guard_enabled", "1" if config.LONG_RUNNING_GUARD_ENABLED else "0"),
+    ("root_fs_scan_guard_enabled", "1" if config.ROOT_FS_SCAN_GUARD_ENABLED else "0"),
     ("message_wrapper_enabled", "1"),
     # --- Events ---
     ("events_dispatch_enabled", "1"),
+    # --- Decim Safety (optional, provider-agnostic decision-model safety) ---
+    # Default off: Decim Safety is never a mandatory dependency and ordinary
+    # operation always falls back to the deterministic HMADS pipeline.
+    ("decim_safety.enabled", "0"),
+    ("decim_safety.mode", "off"),
+    ("decim_safety.provider", "systemone"),
+    ("decim_safety.request_timeout_ms", "1500"),
+    ("decim_safety.minimum_confidence", "0.90"),
+    ("decim_safety.max_payload_chars", "12000"),
+    ("decim_safety.circuit_breaker_failures", "3"),
+    ("decim_safety.circuit_breaker_cooldown_seconds", "60"),
+    ("decim_safety.record_enforce_events", "0"),
+    ("decim_safety.retention_days", "30"),
 ]
 
 
@@ -416,13 +432,13 @@ def run_setup(
     if language not in LANGUAGE_PRESETS:
         language = "english"
 
+    agent_name = (agent_name or "").strip() or DEFAULT_SUPER_AGENT_NAME
+
     # Derive agent ID if not provided
     if not agent_id:
         agent_id = _derive_agent_id(agent_name)
 
     # Validate
-    if not agent_name.strip():
-        return {"error": "Agent name is required"}
     if not re.match(r"^[a-z0-9_]+$", agent_id):
         return {
             "error": "Agent ID must be lowercase alphanumeric and underscores only (snake_case)"

@@ -155,7 +155,8 @@ class TestKanbanStateHandler:
         from backend.agent_state import AgentState
         ms = AgentState(mode='execute')
         task_id = (data or {}).get('task_id', 'task-1')
-        fake_task = {'id': task_id, 'status': task_status}
+        # Activation requires an assignee (see kanban: require assignee before task start).
+        fake_task = {'id': task_id, 'status': task_status, 'assignee': agent_id}
         autopilot_value = '1' if autopilot else '0'
         with mock.patch('plugins.kanban.db.kanban_db') as mock_db, \
              mock.patch('models.db.db') as mock_db2, \

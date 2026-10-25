@@ -12,6 +12,7 @@ Tiers
 - crud:   120 req/min  — /api/agents* (excluding chat/upload sub-paths)
 - general: 300 req/min — all other /api/* endpoints
 - static: 300 req/min  — /static/* (or unlimited, configurable)
+- download: 60 req/min — /plugin/artifact-share/* (tokenized binary downloads)
 - sse:     max 5 concurrent connections per user/IP
 
 Schema
@@ -44,12 +45,16 @@ import config
 # Tier configuration: (requests_per_window, window_seconds)
 # ---------------------------------------------------------------------------
 TIERS = {
-    "chat":    (10,  60),   # 10 req/min — actual LLM message sends only
-    "poll":    (120, 60),   # 120 req/min — cheap chat reads / 1s SSE-fallback poll
-    "upload":  (5,   60),   #  5 req/min
-    "crud":    (120, 60),   # 120 req/min
-    "general": (300, 60),   # 300 req/min
-    "static":  (300, 60),   # 300 req/min (effectively unlimited for normal use)
+    "chat":     (10,  60),   # 10 req/min — actual LLM message sends only
+    "poll":     (120, 60),   # 120 req/min — cheap chat reads / 1s SSE-fallback poll
+    "upload":   (5,   60),   #  5 req/min
+    "crud":     (120, 60),   # 120 req/min
+    "general":  (300, 60),   # 300 req/min
+    "static":   (300, 60),   # 300 req/min (effectively unlimited for normal use)
+    # Bounded tier for the tokenized artifact-share download endpoint
+    # (/plugin/artifact-share/dl/<token>). Deliberately small: each request
+    # streams up to 100 MB, so a bearer token must not be brutable in bulk.
+    "download": (60,  60),   # 60 req/min
 }
 
 # Max concurrent SSE connections per user/IP. A single page legitimately opens
@@ -147,6 +152,7 @@ def classify_request(path: str, method: str = "GET") -> str:
          high-frequency evaluator polling / dashboard / config reads). Non-GET
          (mutations) fall through to normal classification below.
       1. /static/*                     → static
+      1b. /plugin/artifact-share/*      → download (tokenized binary download)
       2. POST /api/agents/<id>/chat and /chat/approve → chat (LLM sends)
       2b. any other /api/agents/<id>/chat* (GET reads, polls, stream) → poll
       3. POST /api/agents/<id>/artifacts* → upload
@@ -162,6 +168,12 @@ def classify_request(path: str, method: str = "GET") -> str:
     # Static assets
     if path.startswith("/static/"):
         return "static"
+
+    # Tokenized cross-agent artifact-share downloads. Each request streams a
+    # binary snapshot behind a short-lived bearer token, so it gets its own
+    # small bounded tier instead of the shared "general" budget.
+    if path.startswith("/plugin/artifact-share/"):
+        return "download"
 
     # High-frequency evaluator polling / dashboard endpoints — exempt READS only
     # from rate limiting. The evaluator hammers these progress/history/config

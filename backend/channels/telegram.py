@@ -7,7 +7,7 @@ import re
 import time
 import threading
 from typing import Dict, Any, Optional, Tuple
-from backend.channels.base import BaseChannel, strip_system_tags
+from backend.channels.base import BaseChannel, strip_system_tags, unique_attachment_path
 
 _logger = logging.getLogger(__name__)
 
@@ -134,8 +134,7 @@ async def _ingest_non_photo_attachment(message, context, agent_id, session_id,
     safe = _sanitize_filename(original_filename)
     target_dir = os.path.join('data', 'attachments', agent_id, session_id)
     try:
-        os.makedirs(target_dir, exist_ok=True)
-        target_path = os.path.join(target_dir, f"{int(time.time())}_{safe}")
+        target_path = unique_attachment_path(target_dir, safe)
         tg_file = await context.bot.get_file(file_id)
         await tg_file.download_to_drive(target_path)
     except Exception as e:
@@ -251,10 +250,7 @@ async def _ingest_photo(message, context, agent_id, session_id, user_id,
                 target_dir = os.path.join(
                     'data', 'attachments', agent_id, session_id
                 )
-                os.makedirs(target_dir, exist_ok=True)
-                target_path = os.path.join(
-                    target_dir, f"{int(time.time())}_{safe}"
-                )
+                target_path = unique_attachment_path(target_dir, safe)
                 if photo_bytes_for_attachment is not None:
                     with open(target_path, 'wb') as f:
                         f.write(photo_bytes_for_attachment)
@@ -507,7 +503,7 @@ class TelegramChannel(BaseChannel):
                     # User is fully approved — fall through to normal processing
                 else:
                     # Step 2: User NOT in allowlist — try pairing-code auto-approve
-                    from backend.channels.pairing import extract_pair_code, format_pair_code as fmt_code
+                    from backend.channels.pairing import extract_pair_code
                     raw_code = extract_pair_code(text) if text else None
                     if raw_code:
                         pending = db.get_pending_approval_by_code(raw_code)
@@ -526,27 +522,28 @@ class TelegramChannel(BaseChannel):
                                         "✅ You're now approved! Welcome aboard. How can I help you today?"
                                     )
                             return
-                        else:
+                        # Unmatched code — fall through so the sender is registered
+                        # as a pending approval and stays approvable from the modal.
+
+                    # No live pairing code (or an unmatched one) — make sure the
+                    # sender has a pending approval visible in the channel modal.
+                    existing = db.get_pending_approvals(self.channel_id)
+                    already_pending = any(
+                        p.get('external_user_id') == user_id for p in existing
+                    )
+                    if not already_pending:
+                        allowed, pair_code = self._check_allowlist(user_id, user_name)
+                        if not allowed and pair_code:
                             await update.message.reply_text(
-                                "❌ That pairing code is invalid or has expired. "
-                                "Please ask the administrator for a new one."
+                                "👋 You're not yet approved to chat here. "
+                                "Please ask the administrator for a pairing code, then send it in this chat."
                             )
-                            return
-                    else:
-                        # No pairing code in message — check if pending approval already exists
-                        existing = db.get_pending_approvals(self.channel_id)
-                        already_pending = any(
-                            p.get('external_user_id') == user_id for p in existing
+                    elif raw_code:
+                        await update.message.reply_text(
+                            "❌ That pairing code is invalid or has expired. "
+                            "Please ask the administrator for a new one."
                         )
-                        if not already_pending:
-                            allowed, pair_code = self._check_allowlist(user_id, user_name)
-                            if not allowed and pair_code:
-                                formatted = fmt_code(pair_code)
-                                await update.message.reply_text(
-                                    "👋 You're not yet approved to chat here. "
-                                    "Please ask the administrator for a pairing code, then send it in this chat."
-                                )
-                        return
+                    return
 
                 # Establish session_id early — needed for attachment storage paths.
                 from models.db import db
@@ -600,7 +597,20 @@ class TelegramChannel(BaseChannel):
 
                 # Check if bot is enabled for this session
                 if not db.is_session_bot_enabled(session_id, agent_id=agent_id):
-                    db.add_chat_message(session_id, 'user', text or '[Image]', agent_id=agent_id)
+                    stored = text or '[Image]'
+                    message_id = db.add_chat_message(session_id, 'user', stored, agent_id=agent_id)
+                    message_id = message_id if type(message_id) in (int, str) else None
+                    from models.chatlog import chatlog_manager
+                    chatlog_manager.get(agent_id, session_id).append({
+                        'type': 'user', 'session_id': session_id, 'content': stored,
+                        'sender_id': user_id, 'message_id': message_id,
+                    })
+                    from backend.event_stream import event_stream
+                    event_stream.emit('message_received', {
+                        'agent_id': agent_id, 'session_id': session_id,
+                        'external_user_id': user_id, 'channel_id': channel_id,
+                        'message': stored, 'message_id': message_id, 'role': 'user',
+                    })
                     return
 
                 # Detect reply/quote: include replied message content as context
@@ -711,7 +721,7 @@ class TelegramChannel(BaseChannel):
             # event handler (fired by run_tool_loop) always sees an empty dict and
             # skips its redundant edit — prevents race between two edit_message_text calls.
             _pending_approval_msgs.pop(approval_id, None)
-            success = approval_registry.resolve(approval_id, decision)
+            success = approval_registry.resolve(approval_id, decision, resolved_by='user:telegram')
             label = 'Approved' if decision == 'approve' else 'Rejected'
             if success:
                 await query.edit_message_text(f"{label} by user.")

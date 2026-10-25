@@ -1,6 +1,5 @@
 """Evonic CLI commands — start, stop, status, plugin, and skill management."""
 
-import fcntl
 import json
 import os
 import shutil
@@ -20,6 +19,10 @@ for lib_dir in ("lib",):
     lib_path = os.path.join(ROOT, lib_dir)
     if os.path.isdir(lib_path) and lib_path not in sys.path:
         sys.path.insert(0, lib_path)
+
+# Cross-platform advisory file locking (POSIX flock / Windows msvcrt). Imported
+# after the sys.path setup above because it lives in the ``backend`` package.
+from backend.file_lock import AlreadyLockedError, open_and_lock, release
 
 
 # PID file location.
@@ -108,9 +111,20 @@ def _is_running(pid):
         return False
 
 
-def _write_pid(pid):
-    """Write PID to file."""
+def _write_pid(pid, fd=None):
+    """Write PID to the PID file.
+
+    When ``fd`` is given the PID is written through that already-open
+    descriptor instead of reopening the file. This keeps the write from
+    truncating (or conflicting with) a byte-range lock we hold on the same
+    file, which is a lock violation on Windows.
+    """
     os.makedirs(PID_DIR, exist_ok=True)
+    if fd is not None:
+        os.lseek(fd, 0, os.SEEK_SET)
+        os.ftruncate(fd, 0)
+        os.write(fd, str(pid).encode())
+        return
     with open(PID_FILE, "w") as f:
         f.write(str(pid))
 
@@ -122,38 +136,32 @@ def _remove_pid():
 
 
 def _acquire_pid_lock():
-    """Acquire an exclusive file lock (flock) on the PID file.
+    """Acquire an exclusive lock on the PID file.
 
-    The lock is held for the lifetime of the file descriptor. If another
-    instance already holds the lock, exit immediately to prevent a second
-    server process from starting.
+    Uses the cross-platform :mod:`backend.file_lock` helper so the guard works
+    on Linux, macOS, and Windows. The lock is held for the lifetime of the
+    returned file descriptor; if another instance already holds it, exit
+    immediately to prevent a second server process from starting.
 
     Returns:
-        The open file descriptor, or ``None`` if daemon mode (caller should
-        not hold the lock — the child process will).
+        The open file descriptor holding the lock. Callers must keep it open
+        for as long as the lock should be held.
     """
     if not os.path.exists(PID_DIR):
         os.makedirs(PID_DIR, exist_ok=True)
 
     try:
-        fd = os.open(PID_FILE, os.O_CREAT | os.O_RDWR)
-    except OSError as e:
-        print(f"Error: Could not open PID file {PID_FILE}: {e}")
-        sys.exit(1)
-
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except IOError as e:
-        # EAGAIN or EWOULDBLOCK means another process holds the lock
-        os.close(fd)
+        return open_and_lock(PID_FILE)
+    except AlreadyLockedError:
         existing_pid = _get_pid()
-        msg = f"Server is already running"
+        msg = "Server is already running"
         if existing_pid:
             msg += f" (PID: {existing_pid})"
         print(msg)
         sys.exit(1)
-
-    return fd
+    except OSError as e:
+        print(f"Error: Could not open PID file {PID_FILE}: {e}")
+        sys.exit(1)
 
 
 def start_server(port=None, host=None, debug=None, daemon=False):
@@ -168,20 +176,6 @@ def start_server(port=None, host=None, debug=None, daemon=False):
     # For foreground mode the lock is held for the entire server lifetime.
     # For daemon mode the child process (app.py) will acquire its own lock.
     pid_lock_fd = _acquire_pid_lock()
-
-    # Check if already running (legacy PID check — redundant with flock but kept
-    # for backward compat and a friendlier error message).
-    existing_pid = _get_pid()
-    if existing_pid and _is_running(existing_pid):
-        print(f"Server is already running (PID: {existing_pid})")
-        try:
-            import config
-
-            print(f"Port: {port or config.PORT}")
-        except Exception:
-            pass
-        os.close(pid_lock_fd)
-        return
 
     # Import config to get defaults
     try:
@@ -214,9 +208,9 @@ def start_server(port=None, host=None, debug=None, daemon=False):
         )
         # Release the lock BEFORE spawning — the child process (app.py) will
         # acquire its own via its single-instance guard. Holding the lock here
-        # causes a race: the child's fcntl.flock(LOCK_NB) fails because this
-        # process still owns the lock, killing the child immediately.
-        os.close(pid_lock_fd)
+        # causes a race: the child's non-blocking lock attempt fails because
+        # this process still owns the lock, killing the child immediately.
+        release(pid_lock_fd)
 
         proc = subprocess.Popen(
             [sys.executable, app_path],
@@ -269,9 +263,11 @@ def start_server(port=None, host=None, debug=None, daemon=False):
         print("  evonic setup")
         sys.exit(1)
 
-    # Write PID and keep the flock fd open — the lock is held for the entire
-    # server lifetime and released automatically by the OS on process exit.
-    _write_pid(os.getpid())
+    # Write our PID through the locked descriptor (instead of reopening the
+    # file) so the write cannot conflict with the byte-range lock we hold on
+    # Windows. The fd stays open for the entire server lifetime — the lock is
+    # released automatically by the OS on process exit.
+    _write_pid(os.getpid(), pid_lock_fd)
 
     print(EVONIC_BANNER)
 
@@ -408,16 +404,21 @@ def restart_server():
 # ─── Plugin Management ────────────────────────────────────────────────────────
 
 
-def _get_plugin_manager():
-    """Lazily create a PluginManager instance."""
+def _get_plugin_manager(load_plugins: bool = True):
+    """Lazily create a PluginManager instance.
+
+    Metadata-only commands pass load_plugins=False: it skips executing
+    plugin handler modules, whose module-level code can mutate state the
+    live server owns (e.g. the kanban scanner schedules).
+    """
     from backend.plugin_manager import PluginManager
 
-    return PluginManager()
+    return PluginManager(load_plugins=load_plugins)
 
 
 def plugin_list():
     """List all installed plugins in a table format."""
-    pm = _get_plugin_manager()
+    pm = _get_plugin_manager(load_plugins=False)
     plugins = pm.list_plugins()
 
     if not plugins:
@@ -1048,10 +1049,84 @@ def skill_export(skill_id, output=None, verbose=False):
 
 
 def _get_skillsets():
-    """Lazily import skillsets module."""
-    from backend import skillsets
+    """Lazily build the skillset view over the canonical template engine.
 
-    return skillsets
+    Skillsets are plain agent templates (``agent_templates/``); this view
+    reproduces the historical ``backend.skillsets`` surface (list / get /
+    resolve / apply) on top of :mod:`backend.agent_templates` so the CLI
+    handlers keep their shape.
+    """
+    from backend import agent_templates
+
+    class _SkillsetView:
+        @staticmethod
+        def list_skillsets():
+            return [
+                {
+                    "id": s["id"],
+                    "name": s["name"],
+                    "description": s["description"],
+                    "tools_count": s["tool_count"],
+                    "skills_count": s["skill_count"],
+                }
+                for s in agent_templates.list_templates()
+                if s["valid"]
+            ]
+
+        @staticmethod
+        def get_skillset(skill_id):
+            try:
+                return agent_templates.get_template(skill_id)
+            except Exception:
+                return None
+
+        @staticmethod
+        def resolve_skillset(skill_id):
+            template = _SkillsetView.get_skillset(skill_id)
+            if template is None:
+                return None
+            try:
+                tools = agent_templates.resolve_template(skill_id)["tools"]
+                resolved = tools.get("resolved", list(template.get("tools") or []))
+                unresolved = tools.get("missing", [])
+            except Exception:
+                resolved = list(template.get("tools") or [])
+                unresolved = []
+            result = dict(template)
+            result["resolved_tools"] = resolved
+            result["unresolved_tools"] = unresolved
+            return result
+
+        @staticmethod
+        def apply_skillset(skill_id, agent_data):
+            template = _SkillsetView.get_skillset(skill_id)
+            if template is None:
+                return {"error": f"Skillset '{skill_id}' not found."}
+            defaults = template.get("defaults") or {}
+            result = {}
+            result["system_prompt"] = agent_data.get(
+                "system_prompt", template.get("system_prompt") or ""
+            )
+            model = (
+                agent_data.get("model_id")
+                or agent_data.get("model")
+                or defaults.get("model_id")
+                or ""
+            )
+            result["model"] = model or None
+            result["tools"] = agent_data.get("tools", template.get("tools") or [])
+            result["skills"] = agent_data.get("skills", template.get("skills") or [])
+            result["kb_files"] = agent_data.get(
+                "kb_files", template.get("kb_files") or {}
+            )
+            result["id"] = agent_data.get("id", "")
+            result["name"] = agent_data.get("name", template.get("name") or "")
+            result["description"] = agent_data.get(
+                "description", template.get("description") or ""
+            )
+            return result
+
+    return _SkillsetView
 
 
 def skillset_list():
@@ -1114,7 +1189,8 @@ def skillset_get(skillset_id):
     print(f"ID:          {skillset.get('id', '')}")
     print(f"Name:        {skillset.get('name', '')}")
     print(f"Description: {skillset.get('description', 'N/A')}")
-    print(f"Model:       {skillset.get('model', '(default)')}")
+    _defaults = skillset.get('defaults') or {}
+    print(f"Model:       {_defaults.get('model_id') or '(default)'}")
 
     # System prompt (truncated)
     sp = skillset.get("system_prompt", "")
@@ -1437,7 +1513,7 @@ def agent_add(agent_id, name, description=None, model=None, skillset=None):
     skills = []
 
     if skillset:
-        from backend import skillsets as ss_mod
+        ss_mod = _get_skillsets()
 
         skillset_data = ss_mod.get_skillset(skillset)
         if skillset_data is None:
@@ -2260,16 +2336,18 @@ def setup_command(non_interactive=False):
         model_name = inp if inp else default_model
 
     # --- Agent name ---
+    from backend.setup import DEFAULT_SUPER_AGENT_NAME
+
     if non_interactive:
-        agent_name = "Siwa Miwa"
+        agent_name = DEFAULT_SUPER_AGENT_NAME
         print(f"  [non-interactive] Using default agent name: {agent_name}")
     else:
         try:
-            agent_name = input("  Your super agent's name (default: Siwa Miwa): ").strip()
+            agent_name = input(f"  Your super agent's name (default: {DEFAULT_SUPER_AGENT_NAME}): ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\n  Setup aborted.")
             return
-        agent_name = agent_name if agent_name else "Siwa Miwa"
+        agent_name = agent_name or DEFAULT_SUPER_AGENT_NAME
 
     # --- Language ---
     if non_interactive:
@@ -3721,6 +3799,9 @@ def doctor_command(quick=False, fix=False, with_llm_provider=False, verbose=Fals
         "long_running_guard_enabled": (
             "1" if getattr(_cfg, "LONG_RUNNING_GUARD_ENABLED", True) else "0"
         ),
+        "root_fs_scan_guard_enabled": (
+            "1" if getattr(_cfg, "ROOT_FS_SCAN_GUARD_ENABLED", True) else "0"
+        ),
         "message_wrapper_enabled": "1",
         "events_dispatch_enabled": "1",
     }
@@ -5123,8 +5204,9 @@ def restore_command(backup_file, dry_run=False, force=False, no_restart=False):
     try:
         with open(backup_file, "rb") as f:
             header = f.read(4)
-            # tar.gz starts with 0x1f 0x8b (gzip magic)
-            if header[:2] != b"\x1f\x8b":
+            # Plain archives start with a known magic: gzip (0x1f 0x8b),
+            # bzip2 ("BZh") or zip ("PK"). Anything else is treated as encrypted.
+            if not (header[:2] == b"\x1f\x8b" or header[:3] == b"BZh" or header[:2] == b"PK"):
                 is_encrypted = True
     except Exception:
         pass

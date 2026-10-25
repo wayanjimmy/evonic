@@ -100,6 +100,20 @@ def _check_agent_access(agent_id: str):
     return agent, None
 
 
+def _emit_panel_updated(agent_id: str) -> None:
+    """Best-effort realtime nudge so every open Panel tab re-renders.
+
+    Mirrors the panel skill tools (panel_add_action / update / remove): the
+    Panel tab in agent_detail.html listens for 'panel_updated' and calls
+    refreshPluginTab('panel'). Failures here must never break the response.
+    """
+    try:
+        from backend.event_stream import event_stream
+        event_stream.emit("panel_updated", {"agent_id": agent_id})
+    except Exception:
+        pass
+
+
 # ---------------------------------------------------------------------------
 # Blueprint factory
 # ---------------------------------------------------------------------------
@@ -153,6 +167,65 @@ def create_blueprint():
         actions = db.list_actions()
 
         return jsonify({"actions": actions})
+
+    # ── PATCH|PUT /plugin/panel/<agent_id>/actions/<int:action_id> ───────────
+    # Used by the Panel tab's edit mode to rename a button.
+
+    @bp.route("/<agent_id>/actions/<int:action_id>", methods=["PATCH", "PUT"])
+    def panel_update_action(agent_id: str, action_id: int):
+        """Rename a panel action button (label-only public edit surface)."""
+        agent, error = _check_agent_access(agent_id)
+        if error:
+            return jsonify(error[0]), error[1]
+
+        db = panel_db_factory(agent_id)
+        if not db.get_action(action_id):
+            return jsonify({"error": "Action not found"}), 404
+
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({"error": "A JSON object body is required"}), 400
+
+        fields = {}
+        if "label" in payload:
+            raw_label = payload.get("label")
+            label = raw_label.strip() if isinstance(raw_label, str) else ""
+            if not label:
+                return jsonify({"error": "Label cannot be empty"}), 400
+            if len(label) > 120:
+                return jsonify({"error": "Label is too long (max 120 characters)"}), 400
+            fields["label"] = label
+
+        if not fields:
+            return jsonify({"error": "No editable fields provided"}), 400
+
+        try:
+            updated = db.update_action(action_id, **fields)
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+
+        if not updated:
+            return jsonify({"error": "Action not found"}), 404
+
+        _emit_panel_updated(agent_id)
+        return jsonify({"status": "updated", "action": updated})
+
+    # ── DELETE /plugin/panel/<agent_id>/actions/<int:action_id> ──────────────
+    # Used by the Panel tab's edit mode to remove a button.
+
+    @bp.route("/<agent_id>/actions/<int:action_id>", methods=["DELETE"])
+    def panel_delete_action(agent_id: str, action_id: int):
+        """Delete a panel action button, scoped to this agent."""
+        agent, error = _check_agent_access(agent_id)
+        if error:
+            return jsonify(error[0]), error[1]
+
+        db = panel_db_factory(agent_id)
+        if not db.delete_action(action_id):
+            return jsonify({"error": "Action not found"}), 404
+
+        _emit_panel_updated(agent_id)
+        return jsonify({"status": "deleted", "action_id": action_id})
 
     # ── POST /plugin/panel/<agent_id>/execute/<int:action_id> ────────────
 
@@ -273,6 +346,23 @@ def create_blueprint():
 # HTML rendering
 # ---------------------------------------------------------------------------
 
+# Inline icons for the per-button edit controls (stroke inherits currentColor).
+_PENCIL_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" '
+    'stroke="currentColor" stroke-width="2" stroke-linecap="round" '
+    'stroke-linejoin="round" aria-hidden="true">'
+    '<path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>'
+)
+_TRASH_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" '
+    'stroke="currentColor" stroke-width="2" stroke-linecap="round" '
+    'stroke-linejoin="round" aria-hidden="true">'
+    '<polyline points="3 6 5 6 21 6"/>'
+    '<path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>'
+    '<line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>'
+)
+
+
 def _render_panel_html(agent_id: str, agent: dict, actions: list) -> str:
     """Build the panel UI as an HTML body fragment.
 
@@ -281,7 +371,15 @@ def _render_panel_html(agent_id: str, agent: dict, actions: list) -> str:
     Must NOT be a full document and must NOT load external scripts.
     """
 
-    actions_json = json.dumps(actions)
+    # This JSON is embedded verbatim inside a <script> block, so escape the
+    # characters that could close it (a label like "</script>" would otherwise
+    # break out). \u003c etc. parse back to the same characters in JS.
+    actions_json = (
+        json.dumps(actions)
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+    )
     agent_name = agent.get("name", agent_id)
 
     panel_css = """<style>
@@ -349,6 +447,33 @@ def _render_panel_html(agent_id: str, agent: dict, actions: list) -> str:
   .pnl-btn-sec:hover { background:#334155; }
   .pnl-btn-pri { background:#4f46e5; }
   .pnl-btn-pri:hover { background:#4338ca; }
+  /* ── Edit mode ─────────────────────────────────────────────────────────── */
+  .pnl-head { display:flex; align-items:center; justify-content:space-between; gap:.5rem; }
+  .pnl-edit-toggle { display:inline-flex; align-items:center; gap:.3rem; flex:0 0 auto; font-size:.72rem; font-weight:600; color:#4338ca; background:#eef2ff; border:1px solid #c7d2fe; border-radius:.5rem; padding:.3rem .55rem; cursor:pointer; white-space:nowrap; }
+  .pnl-edit-toggle:hover { background:#e0e7ff; }
+  .pnl-edit-toggle:focus-visible { outline:2px solid #6366f1; outline-offset:1px; }
+  .pnl-edit-toggle svg { width:.85rem; height:.85rem; }
+  .pnl-edit-toggle.is-active { background:#4f46e5; border-color:#4f46e5; color:#fff; }
+  .pnl-edit-toggle.is-active:hover { background:#4338ca; }
+  .pnl-edit-hint { margin:0; font-size:.72rem; line-height:1.4; color:#6b7280; }
+  .dark .pnl-edit-toggle { color:#c7d2fe; background:#312e81; border-color:#4338ca; }
+  .dark .pnl-edit-toggle:hover { background:#3730a3; }
+  .dark .pnl-edit-toggle.is-active { background:#4f46e5; border-color:#6366f1; color:#fff; }
+  .dark .pnl-edit-hint { color:#9ca3af; }
+  .pnl-item { position:relative; min-width:0; }
+  .pnl-item-tools { display:none; position:absolute; top:50%; right:.3rem; transform:translateY(-50%); align-items:center; gap:.15rem; padding:.12rem .2rem; border-radius:.5rem; background:rgba(255,255,255,.95); box-shadow:0 1px 4px rgba(15,23,42,.3); }
+  .pnl-edit-mode .pnl-item-tools { display:flex; }
+  /* In edit mode the action button itself is inert: no pointer events, no
+     focus, and marked aria-disabled so assistive tech announces it. */
+  .pnl-edit-mode .panel-btn { pointer-events:none; padding-right:4.5rem; }
+  .pnl-tool { display:inline-flex; align-items:center; justify-content:center; width:1.5rem; height:1.5rem; padding:0; border:none; border-radius:.375rem; background:transparent; color:#4b5563; cursor:pointer; }
+  .pnl-tool:hover { background:#e5e7eb; }
+  .pnl-tool:focus-visible { outline:2px solid #6366f1; outline-offset:1px; }
+  .pnl-tool svg { width:.9rem; height:.9rem; }
+  .pnl-tool-edit:hover { color:#4338ca; }
+  .pnl-tool-del:hover { color:#b91c1c; background:#fee2e2; }
+  .pnl-toast { position:fixed; left:50%; bottom:1.25rem; transform:translateX(-50%); background:#1e293b; color:#f8fafc; font-size:.8rem; padding:.5rem .9rem; border-radius:.5rem; border:1px solid #334155; box-shadow:0 8px 24px rgba(15,23,42,.45); z-index:60; }
+  .pnl-toast.pnl-toast-err { background:#7f1d1d; border-color:#b91c1c; }
   .dark .pnl-search { background:#374151; border-color:#4b5563; color:#f3f4f6; }
   .dark .pnl-empty { border-color:#4b5563; color:#9ca3af; }
   @media (max-width:1023px) {
@@ -363,7 +488,11 @@ def _render_panel_html(agent_id: str, agent: dict, actions: list) -> str:
 
     html = panel_css + f"""<div class="pnl-wrap">
   <div class="pnl-left">
-    <h2 class="pnl-title">Panel — <span>{_escape_html(agent_name)}</span></h2>
+    <div class="pnl-head">
+      <h2 class="pnl-title">Panel — <span>{_escape_html(agent_name)}</span></h2>
+      <button id="pnl-edit-toggle" class="pnl-edit-toggle" type="button" aria-pressed="false" title="Edit panel buttons">{_PENCIL_SVG}<span id="pnl-edit-toggle-label">Edit</span></button>
+    </div>
+    <p id="pnl-edit-hint" class="pnl-edit-hint pnl-hidden">Edit mode: buttons are paused. Use the pencil to rename or the trash to remove a button, then click Done.</p>
     <div class="pnl-search-wrap">
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m21 21-4.3-4.3m1.8-4.7a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0Z"/></svg>
       <input id="pnl-search" class="pnl-search" type="search" placeholder="Filter buttons..." autocomplete="off">
@@ -393,7 +522,13 @@ def _render_panel_html(agent_id: str, agent: dict, actions: list) -> str:
             label_lower = f"{label_lower} /{_escape_html(slash_command.lower())}"
             cmd_badge = f'<span class="pnl-cmd" title="Run from chat with /{cmd}">/{cmd}</span>'
 
-        html += f"""      <button class="panel-btn {color_class}{disabled_class}" data-action-id="{aid}" data-action-type="{atype}" data-label="{label}" data-search="{label_lower}" {disabled_attr}><span class="pnl-dot"></span><span class="pnl-hour">&#8987;</span><span class="pnl-label">{label}</span>{cmd_badge}</button>
+        html += f"""      <div class="pnl-item" data-action-id="{aid}">
+        <button class="panel-btn {color_class}{disabled_class}" data-action-id="{aid}" data-action-type="{atype}" data-label="{label}" data-search="{label_lower}" {disabled_attr}><span class="pnl-dot"></span><span class="pnl-hour">&#8987;</span><span class="pnl-label">{label}</span>{cmd_badge}</button>
+        <div class="pnl-item-tools">
+          <button class="pnl-tool pnl-tool-edit" type="button" data-action-id="{aid}" title="Rename button" aria-label="Rename {label}">{_PENCIL_SVG}</button>
+          <button class="pnl-tool pnl-tool-del" type="button" data-action-id="{aid}" title="Delete button" aria-label="Delete {label}">{_TRASH_SVG}</button>
+        </div>
+      </div>
 """
 
     if not actions:
@@ -426,6 +561,20 @@ def _render_panel_html(agent_id: str, agent: dict, actions: list) -> str:
     </div>
   </div>
 </div>
+
+<div id="pnl-rename-modal" class="pnl-modal pnl-hidden">
+  <div class="pnl-modal-card" role="dialog" aria-modal="true" aria-labelledby="pnl-rename-title">
+    <h3 id="pnl-rename-title" class="pnl-modal-title">Rename button</h3>
+    <div class="pnl-field">
+      <label for="pnl-rename-input">Button label</label>
+      <input id="pnl-rename-input" type="text" maxlength="120" autocomplete="off">
+    </div>
+    <div class="pnl-modal-actions">
+      <button id="pnl-rename-cancel" class="pnl-btn-sec" type="button">Cancel</button>
+      <button id="pnl-rename-save" class="pnl-btn-pri" type="button">Save</button>
+    </div>
+  </div>
+</div>
 """
 
     panel_script = """<script>
@@ -440,6 +589,7 @@ def _render_panel_html(agent_id: str, agent: dict, actions: list) -> str:
   let pendingAction = null;
   let termFresh = true;
   let currentRunBody = null;
+  let editMode = false;
 
   const termBody = document.getElementById('pnl-term-body');
   const badge = document.getElementById('pnl-badge');
@@ -604,7 +754,8 @@ def _render_panel_html(agent_id: str, agent: dict, actions: list) -> str:
 
   function setButtonsDisabled(state) {
     document.querySelectorAll('.panel-btn').forEach(function(b) {
-      if (!b.classList.contains('btn-disabled')) b.disabled = state;
+      // While edit mode is on the buttons must stay inert even after a run.
+      if (!b.classList.contains('btn-disabled')) b.disabled = state || editMode;
     });
     if (!state && loadingBtn) {
       loadingBtn.classList.remove('btn-running');
@@ -619,14 +770,15 @@ def _render_panel_html(agent_id: str, agent: dict, actions: list) -> str:
   if (searchInput) {
     searchInput.addEventListener('input', function() {
       const q = searchInput.value.trim().toLowerCase();
-      const btns = btnGrid.querySelectorAll('.panel-btn');
+      const items = btnGrid.querySelectorAll('.pnl-item');
       let visible = 0;
-      btns.forEach(function(btn) {
-        const match = !q || (btn.dataset.search || '').indexOf(q) !== -1;
-        btn.classList.toggle('pnl-hidden', !match);
+      items.forEach(function(item) {
+        const btn = item.querySelector('.panel-btn');
+        const match = !q || ((btn && btn.dataset.search) || '').indexOf(q) !== -1;
+        item.classList.toggle('pnl-hidden', !match);
         if (match) visible++;
       });
-      noMatch.classList.toggle('pnl-hidden', !(btns.length > 0 && visible === 0));
+      noMatch.classList.toggle('pnl-hidden', !(items.length > 0 && visible === 0));
     });
   }
 
@@ -642,9 +794,215 @@ def _render_panel_html(agent_id: str, agent: dict, actions: list) -> str:
     });
   }
 
+  // ── Edit mode ────────────────────────────────────────────────────────────
+  // Entering edit mode turns every action button into an inert element: it is
+  // disabled, taken out of the pointer/tab path and marked aria-disabled, so
+  // clicking it can no longer run the action. In exchange, each button gains a
+  // pencil (rename) and a trash (delete) control. The mode is remembered in
+  // sessionStorage so an automatic panel re-render (the 'panel_updated'
+  // realtime event) does not drop the user back out of it.
+  const EDIT_STORE_KEY = 'pnl-edit-mode:' + AGENT_ID;
+  const editToggle = document.getElementById('pnl-edit-toggle');
+  const editToggleLabel = document.getElementById('pnl-edit-toggle-label');
+  const editHint = document.getElementById('pnl-edit-hint');
+
+  function setEditMode(on) {
+    editMode = !!on;
+    btnGrid.classList.toggle('pnl-edit-mode', editMode);
+    if (editToggle) {
+      editToggle.classList.toggle('is-active', editMode);
+      editToggle.setAttribute('aria-pressed', editMode ? 'true' : 'false');
+    }
+    if (editToggleLabel) editToggleLabel.textContent = editMode ? 'Done' : 'Edit';
+    if (editHint) editHint.classList.toggle('pnl-hidden', !editMode);
+    document.querySelectorAll('.panel-btn').forEach(function(btn) {
+      if (editMode) {
+        if (btn.dataset.pnlWasDisabled === undefined) {
+          btn.dataset.pnlWasDisabled = btn.disabled ? '1' : '0';
+        }
+        btn.disabled = true;
+        btn.setAttribute('aria-disabled', 'true');
+      } else {
+        const wasDisabled = btn.dataset.pnlWasDisabled === '1';
+        btn.disabled = wasDisabled;
+        if (!wasDisabled) btn.removeAttribute('aria-disabled');
+        delete btn.dataset.pnlWasDisabled;
+      }
+    });
+    try { sessionStorage.setItem(EDIT_STORE_KEY, editMode ? '1' : '0'); } catch (e) {}
+  }
+
+  if (editToggle) {
+    editToggle.addEventListener('click', function() { setEditMode(!editMode); });
+  }
+
+  // Small transient message used by the rename/delete flows.
+  function editToast(message, isError) {
+    const el = document.createElement('div');
+    el.className = 'pnl-toast' + (isError ? ' pnl-toast-err' : '');
+    el.setAttribute('role', 'status');
+    el.textContent = message;
+    document.body.appendChild(el);
+    setTimeout(function() { el.remove(); }, 2600);
+  }
+
+  function refreshGridEmptyState() {
+    if (btnGrid.querySelectorAll('.panel-btn').length > 0) return;
+    noMatch.classList.add('pnl-hidden');
+    if (!btnGrid.querySelector('.pnl-empty')) {
+      const empty = document.createElement('div');
+      empty.className = 'pnl-empty';
+      empty.textContent = 'No actions yet. This agent has not added any panel buttons.';
+      btnGrid.appendChild(empty);
+    }
+  }
+
+  const renameModal = document.getElementById('pnl-rename-modal');
+  const renameInput = document.getElementById('pnl-rename-input');
+  let renameTargetId = null;
+
+  function openRenameModal(actionId) {
+    const action = actions.find(function(a) { return a.id === actionId; });
+    if (!action || !renameModal) return;
+    renameTargetId = actionId;
+    renameInput.value = action.label || '';
+    renameModal.classList.remove('pnl-hidden');
+    renameInput.focus();
+    renameInput.select();
+  }
+
+  function closeRenameModal() {
+    renameTargetId = null;
+    if (renameModal) renameModal.classList.add('pnl-hidden');
+  }
+
+  // Keep the freshly renamed button (label, filter index, tool tips) in sync
+  // without waiting for the realtime re-render.
+  function syncButtonLabel(actionId, label) {
+    const btn = btnGrid.querySelector('.panel-btn[data-action-id="' + actionId + '"]');
+    if (!btn) return;
+    btn.dataset.label = label;
+    const action = actions.find(function(a) { return a.id === actionId; });
+    const cmd = action && action.slash_command ? String(action.slash_command).trim().toLowerCase() : '';
+    btn.dataset.search = cmd ? (label.toLowerCase() + ' /' + cmd) : label.toLowerCase();
+    const labelEl = btn.querySelector('.pnl-label');
+    if (labelEl) labelEl.textContent = label;
+    const item = btn.closest('.pnl-item');
+    if (item) {
+      item.querySelectorAll('.pnl-tool').forEach(function(tool) {
+        const verb = tool.classList.contains('pnl-tool-edit') ? 'Rename ' : 'Delete ';
+        tool.setAttribute('aria-label', verb + label);
+      });
+    }
+  }
+
+  async function saveRename() {
+    if (renameTargetId === null) return;
+    const actionId = renameTargetId;
+    const label = (renameInput.value || '').trim();
+    const action = actions.find(function(a) { return a.id === actionId; });
+
+    if (!label) {
+      editToast('Button label cannot be empty.', true);
+      renameInput.focus();
+      return;
+    }
+    if (action && label === action.label) { closeRenameModal(); return; }
+
+    const saveBtn = document.getElementById('pnl-rename-save');
+    if (saveBtn) saveBtn.disabled = true;
+    try {
+      const resp = await fetch('/plugin/panel/' + AGENT_ID + '/actions/' + actionId, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label: label })
+      });
+      const data = await resp.json().catch(function() { return {}; });
+      if (!resp.ok) {
+        editToast(data.error || 'Could not rename this button.', true);
+        return;
+      }
+      if (action) action.label = label;
+      syncButtonLabel(actionId, label);
+      closeRenameModal();
+      editToast('Button renamed.');
+    } catch (err) {
+      editToast('Network error: ' + err.message, true);
+    } finally {
+      if (saveBtn) saveBtn.disabled = false;
+    }
+  }
+
+  async function removeAction(actionId) {
+    const action = actions.find(function(a) { return a.id === actionId; });
+    const label = action ? action.label : ('action ' + actionId);
+    let ok = false;
+    if (window.ui && window.ui.confirm) {
+      ok = await window.ui.confirm({
+        title: 'Delete button',
+        message: 'Remove "' + label + '" from this panel? This cannot be undone.',
+        confirmText: 'Delete',
+        danger: true
+      });
+    } else {
+      ok = window.confirm('Remove "' + label + '" from this panel?');
+    }
+    if (!ok) return;
+
+    try {
+      const resp = await fetch('/plugin/panel/' + AGENT_ID + '/actions/' + actionId, { method: 'DELETE' });
+      const data = await resp.json().catch(function() { return {}; });
+      if (!resp.ok) {
+        editToast(data.error || 'Could not delete this button.', true);
+        return;
+      }
+      const item = btnGrid.querySelector('.pnl-item[data-action-id="' + actionId + '"]');
+      if (item) item.remove();
+      for (let i = actions.length - 1; i >= 0; i--) {
+        if (actions[i].id === actionId) actions.splice(i, 1);
+      }
+      refreshGridEmptyState();
+      editToast('Button removed.');
+    } catch (err) {
+      editToast('Network error: ' + err.message, true);
+    }
+  }
+
+  // The pencil/trash controls are delegated from the grid so they keep working
+  // for buttons added by a later re-render.
+  if (btnGrid) {
+    btnGrid.addEventListener('click', function(e) {
+      if (!editMode || !e.target.closest) return;
+      const editTool = e.target.closest('.pnl-tool-edit');
+      if (editTool) {
+        e.preventDefault();
+        e.stopPropagation();
+        openRenameModal(parseInt(editTool.dataset.actionId, 10));
+        return;
+      }
+      const delTool = e.target.closest('.pnl-tool-del');
+      if (delTool) {
+        e.preventDefault();
+        e.stopPropagation();
+        removeAction(parseInt(delTool.dataset.actionId, 10));
+      }
+    });
+  }
+
+  if (renameModal) {
+    document.getElementById('pnl-rename-cancel').addEventListener('click', closeRenameModal);
+    document.getElementById('pnl-rename-save').addEventListener('click', saveRename);
+    renameModal.addEventListener('click', function(e) { if (e.target === renameModal) closeRenameModal(); });
+    renameInput.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') { e.preventDefault(); saveRename(); }
+      else if (e.key === 'Escape') { e.preventDefault(); closeRenameModal(); }
+    });
+  }
+
   // ── Button click handler ──────────────────────────────────────────
   document.querySelectorAll('.panel-btn:not([disabled])').forEach(function(btn) {
     btn.addEventListener('click', async function() {
+      if (editMode) return; // edit mode: buttons are inert, only the tools act
       const actionId = parseInt(btn.dataset.actionId);
       const actionType = btn.dataset.actionType;
       const action = actions.find(function(a) { return a.id === actionId; });
@@ -828,6 +1186,11 @@ def _render_panel_html(agent_id: str, agent: dict, actions: list) -> str:
       }
     }, 500);
   }
+
+  // Re-enter edit mode if the user had it on before an automatic re-render.
+  try {
+    if (sessionStorage.getItem(EDIT_STORE_KEY) === '1') setEditMode(true);
+  } catch (e) {}
 })();
 </script>"""
 

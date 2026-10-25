@@ -8,13 +8,17 @@
     var agentsCache = null;
     var agentsPromise = null;   // deduplicate concurrent fetchAgents() calls
     var overlayEl = null;
+    var panelEl = null;
     var inputEl = null;
-    var dropdownEl = null;
-    var selectedIndex = -1;
-    var filteredAgents = [];
+    var listEl = null;
+    var countEl = null;
+    var selectedIndex = 0;
+    var shown = [];               // agents currently listed (already ranked)
+    var lastFocused = null;
+    var currentQuery = '';
 
     // ============================================================
-    //  Agent Quick Search (Ctrl+G / Cmd+G)
+    //  Agent Quick Search (Ctrl+G / Cmd+G) — command-palette style
     // ============================================================
 
     function fetchAgents() {
@@ -42,220 +46,208 @@
         return name.charAt(0).toUpperCase();
     }
 
+
+    function esc(str) {
+        return String(str == null ? '' : str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function currentAgentId() {
+        var m = location.pathname.match(/^\/agents\/([^\/?#]+)/);
+        return m ? decodeURIComponent(m[1]) : null;
+    }
+
+    var ICON_SEARCH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>';
+    var ICON_ENTER = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg>';
+
     function buildOverlay() {
         if (overlayEl) return;
-
         overlayEl = document.createElement('div');
-        overlayEl.className = 'fixed inset-0 z-[9999] flex items-start justify-center pt-[22vh]';
-        overlayEl.style.background = 'rgba(0,0,0,0.4)';
-        overlayEl.style.backdropFilter = 'blur(2px)';
-        overlayEl.addEventListener('click', function (e) {
-            if (e.target === overlayEl) closeOverlay();
-        });
+        overlayEl.className = 'qs-overlay';
+        overlayEl.setAttribute('role', 'dialog');
+        overlayEl.setAttribute('aria-modal', 'true');
+        overlayEl.setAttribute('aria-label', 'Search agents');
+        overlayEl.innerHTML =
+            '<div class="qs-panel">' +
+              '<div class="qs-input-row">' + ICON_SEARCH +
+                '<input class="qs-input" type="text" placeholder="Search agents by name or ID…" autocomplete="off" spellcheck="false" ' +
+                       'role="combobox" aria-expanded="true" aria-controls="qs-list" aria-autocomplete="list">' +
+                '<kbd class="qs-kbd">esc</kbd>' +
+              '</div>' +
+              '<div class="qs-list" id="qs-list" role="listbox"></div>' +
+              '<div class="qs-footer">' +
+                '<span class="qs-hint"><kbd>↑</kbd><kbd>↓</kbd>navigate</span>' +
+                '<span class="qs-hint"><kbd>↵</kbd>open</span>' +
+                '<span class="qs-hint qs-hint-tab"><kbd>⌘</kbd><kbd>↵</kbd>new tab</span>' +
+                '<span class="qs-count" aria-live="polite"></span>' +
+              '</div>' +
+            '</div>';
+        panelEl = overlayEl.firstChild;
+        inputEl = overlayEl.querySelector('.qs-input');
+        listEl = overlayEl.querySelector('.qs-list');
+        countEl = overlayEl.querySelector('.qs-count');
 
-        var box = document.createElement('div');
-        box.className = 'w-full max-w-lg mx-4 bg-white dark:bg-gray-800 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 overflow-hidden';
-        box.style.marginTop = '100px';
-        box.addEventListener('click', function (e) { e.stopPropagation(); });
-
-        // Search input row
-        var inputRow = document.createElement('div');
-        inputRow.className = 'flex items-center px-4 py-3 border-b border-gray-200 dark:border-gray-700';
-
-        var icon = document.createElement('span');
-        icon.className = 'mr-3 text-gray-400 dark:text-gray-500 flex-shrink-0';
-        icon.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>';
-
-        inputEl = document.createElement('input');
-        inputEl.type = 'text';
-        inputEl.placeholder = 'Search agents...';
-        inputEl.className = 'flex-1 bg-transparent border-none outline-none text-gray-900 dark:text-gray-100 text-base placeholder-gray-400 dark:placeholder-gray-500 py-2 px-2';
-        inputEl.setAttribute('autocomplete', 'off');
-        inputEl.setAttribute('spellcheck', 'false');
-
-        inputRow.appendChild(icon);
-        inputRow.appendChild(inputEl);
-
-        // Dropdown
-        dropdownEl = document.createElement('div');
-        dropdownEl.className = 'max-h-72 overflow-y-auto';
-
-        box.appendChild(inputRow);
-        box.appendChild(dropdownEl);
-        overlayEl.appendChild(box);
-
-        // Delegated mouseover on dropdown — update highlight without DOM rebuild
-        dropdownEl.addEventListener('mouseover', function (e) {
-            var item = e.target.closest('[data-index]');
-            if (!item) return;
-            var idx = parseInt(item.getAttribute('data-index'));
-            if (idx === selectedIndex) return;
-            var prev = dropdownEl.querySelector('[data-index].bg-blue-50');
-            if (prev) {
-                prev.classList.remove('bg-blue-50', 'dark:bg-blue-900/30');
-            }
-            selectedIndex = idx;
-            item.classList.add('bg-blue-50', 'dark:bg-blue-900/30');
-        });
-
-        // Input events
+        overlayEl.addEventListener('mousedown', function (e) { if (e.target === overlayEl) closeOverlay(); });
         inputEl.addEventListener('input', onInput);
         inputEl.addEventListener('keydown', onKeyDown);
 
+        // Delegated hover / click: moves the highlight without rebuilding the list
+        listEl.addEventListener('mousemove', function (e) {
+            var item = e.target.closest('[data-index]');
+            if (!item) return;
+            var idx = parseInt(item.getAttribute('data-index'), 10);
+            if (idx !== selectedIndex) setSelected(idx, false);
+        });
+        listEl.addEventListener('click', function (e) {
+            var item = e.target.closest('[data-index]');
+            if (item) selectAgent(shown[parseInt(item.getAttribute('data-index'), 10)], e.metaKey || e.ctrlKey);
+        });
         document.body.appendChild(overlayEl);
     }
 
+    function isOpen() { return !!overlayEl && overlayEl.classList.contains('is-open'); }
+
     function showOverlay() {
         buildOverlay();
-        overlayEl.style.display = 'flex';
-        selectedIndex = -1;
-        filteredAgents = [];
+        lastFocused = document.activeElement;
+        currentQuery = '';
         inputEl.value = '';
-        renderDropdown([]);
-        setTimeout(function () { inputEl.focus(); }, 50);
-        fetchAgents(); // warm cache
+        selectedIndex = 0;
+        overlayEl.classList.add('is-open');
+        document.documentElement.classList.add('qs-lock');
+        render();                                   // skeleton while the first fetch is in flight
+        fetchAgents().then(function () { if (isOpen()) { rank(); render(); } });
+        setTimeout(function () { inputEl.focus(); }, 30);
     }
 
     function closeOverlay() {
-        if (overlayEl) {
-            overlayEl.style.display = 'none';
-        }
+        if (!overlayEl) return;
+        overlayEl.classList.remove('is-open');
+        document.documentElement.classList.remove('qs-lock');
+        if (lastFocused && typeof lastFocused.focus === 'function') { try { lastFocused.focus(); } catch (_) {} }
+    }
+
+    // ---- ranking -------------------------------------------------------------------------------
+    function score(q, a) {
+        var name = String(a.name || '').toLowerCase();
+        var id = String(a.id || '').toLowerCase();
+        if (name === q || id === q) return 100;
+        if (name.indexOf(q) === 0) return 85;
+        if (id.indexOf(q) === 0) return 75;
+        if (new RegExp('(^|[\\s_\\-/])' + q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).test(name)) return 65;   // a word starts with q
+        if (name.indexOf(q) !== -1) return 55;
+        if (id.indexOf(q) !== -1) return 45;
+        // subsequence ("gl" finds "Galactus"): every char of q appears in order in the name
+        var i = 0;
+        for (var c = 0; c < name.length && i < q.length; c++) if (name.charAt(c) === q.charAt(i)) i++;
+        return i === q.length ? 20 : 0;
+    }
+
+    function rank() {
+        var agents = agentsCache || [];
+        var q = currentQuery;
+        if (!q) { shown = agents.slice(); return; }
+        shown = agents
+            .map(function (a, i) { return { a: a, s: score(q, a), i: i }; })
+            .filter(function (x) { return x.s > 0; })
+            .sort(function (x, y) { return (y.s - x.s) || (x.i - y.i); })
+            .map(function (x) { return x.a; });
+    }
+
+    function mark(text, q) {
+        var t = String(text == null ? '' : text);
+        if (!q) return esc(t);
+        var i = t.toLowerCase().indexOf(q);
+        if (i === -1) return esc(t);
+        return esc(t.slice(0, i)) + '<mark class="qs-mark">' + esc(t.slice(i, i + q.length)) + '</mark>' + esc(t.slice(i + q.length));
     }
 
     function onInput() {
-        var query = inputEl.value.trim().toLowerCase();
-        if (!query) {
-            filteredAgents = [];
-            selectedIndex = -1;
-            renderDropdown([]);
-            return;
-        }
-
-        // Capture query in a closure so async callback always uses the
-        // correct value even when the user types quickly.
-        (function (q) {
-            fetchAgents().then(function (agents) {
-                filteredAgents = agents.filter(function (a) {
-                    var name = String(a.name || '').toLowerCase();
-                    var id   = String(a.id   || '').toLowerCase();
-                    return name.indexOf(q) !== -1 || id.indexOf(q) !== -1;
-                });
-                selectedIndex = filteredAgents.length > 0 ? 0 : -1;
-                renderDropdown(filteredAgents);
-            });
-        })(query);
+        currentQuery = inputEl.value.trim().toLowerCase();
+        rank();
+        selectedIndex = 0;
+        render();
     }
 
-    function renderDropdown(agents) {
-        dropdownEl.innerHTML = '';
-        if (agents.length === 0) {
-            var empty = document.createElement('div');
-            empty.className = 'px-4 py-8 text-center text-sm text-gray-400 dark:text-gray-500';
-            empty.textContent = 'No agents found';
-            dropdownEl.appendChild(empty);
+    // ---- rendering -----------------------------------------------------------------------------
+    function render() {
+        if (!agentsCache) {                              // first open, still loading
+            listEl.innerHTML = '<div class="qs-skel"></div><div class="qs-skel"></div><div class="qs-skel"></div>';
+            countEl.textContent = '';
             return;
         }
-
-        agents.forEach(function (agent, i) {
-            var item = document.createElement('div');
-            item.className = 'flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors';
-            if (i === selectedIndex) {
-                item.classList.add('bg-blue-50', 'dark:bg-blue-900/30');
-            }
-            item.setAttribute('data-index', i);
-            item.addEventListener('click', function () { selectAgent(agent); });
-
-            // Avatar circle — custom image when available, initial letter fallback
-            var avatar = document.createElement('div');
-            avatar.className = 'w-9 h-9 rounded-full flex items-center justify-center text-sm font-semibold text-white flex-shrink-0 overflow-hidden';
-
-            if (agent.avatar_path) {
-                var avatarImg = document.createElement('img');
-                avatarImg.src = '/api/agents/' + encodeURIComponent(agent.id) + '/avatar?size=small';
-                avatarImg.alt = agent.name;
-                avatarImg.className = 'w-9 h-9 rounded-full object-cover';
-                avatarImg.onerror = function () {
-                    avatarImg.remove();
-                    avatar.style.backgroundColor = agentColor(agent.id);
-                    avatar.textContent = getInitial(agent.name);
-                };
-                avatar.appendChild(avatarImg);
-            } else {
-                avatar.style.backgroundColor = agentColor(agent.id);
-                avatar.textContent = getInitial(agent.name);
-            }
-
-            // Info
-            var info = document.createElement('div');
-            info.className = 'flex-1 min-w-0';
-
-            var nameLine = document.createElement('div');
-            nameLine.className = 'flex items-center gap-2';
-
-            var nameSpan = document.createElement('span');
-            nameSpan.className = 'text-sm font-medium text-gray-900 dark:text-gray-100 truncate';
-            nameSpan.textContent = agent.name;
-
-            var idSpan = document.createElement('span');
-            idSpan.className = 'text-xs text-gray-400 dark:text-gray-500';
-            idSpan.textContent = agent.id;
-
-            nameLine.appendChild(nameSpan);
-            nameLine.appendChild(idSpan);
-
-            // Enabled/disabled badge
-            var badge = document.createElement('span');
-            if (agent.enabled) {
-                badge.className = 'text-xs px-1.5 py-0.5 rounded bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300';
-                badge.textContent = 'active';
-            } else {
-                badge.className = 'text-xs px-1.5 py-0.5 rounded bg-gray-200 dark:bg-gray-600 text-gray-500 dark:text-gray-400';
-                badge.textContent = 'disabled';
-            }
-
-            info.appendChild(nameLine);
-
-            item.appendChild(avatar);
-            item.appendChild(info);
-            item.appendChild(badge);
-            dropdownEl.appendChild(item);
+        if (!shown.length && !currentQuery && !agentsCache.length) {
+            listEl.innerHTML = '<div class="qs-empty">No agents yet</div>';
+            countEl.textContent = '';
+            return;
+        }
+        if (!shown.length) {
+            listEl.innerHTML = '<div class="qs-empty"><span class="qs-empty-ico">' + ICON_SEARCH + '</span>' +
+                'No agents match “' + esc(inputEl.value.trim()) + '”<small>Try a name or an agent ID</small></div>';
+            countEl.textContent = '0 results';
+            return;
+        }
+        var here = currentAgentId();
+        var html = '<div class="qs-label">' + (currentQuery ? 'Agents' : 'Recent agents') + '</div>';
+        shown.forEach(function (a, i) {
+            var initial = esc(getInitial(a.name));
+            var color = agentColor(String(a.id));
+            html += '<div class="qs-item' + (i === selectedIndex ? ' is-selected' : '') + '" role="option" id="qs-opt-' + i + '" data-index="' + i + '" aria-selected="' + (i === selectedIndex) + '">' +
+                '<img class="qs-avatar" src="/api/agents/' + encodeURIComponent(a.id) + '/avatar?size=small" alt="" loading="lazy" ' +
+                     'onerror="this.outerHTML=\'<span class=\\\'qs-avatar qs-avatar-fb\\\' style=\\\'background:' + color + '\\\'>' + initial + '</span>\'">' +
+                '<div class="qs-main"><div class="qs-name">' + mark(a.name, currentQuery) + '</div>' +
+                '<div class="qs-id">' + mark(a.id, currentQuery) + '</div></div>' +
+                (a.id === here ? '<span class="qs-badge qs-badge-cur">Current</span>' : '') +
+                (a.enabled === 0 || a.enabled === false ? '<span class="qs-badge qs-badge-off">disabled</span>' : '') +
+                '<span class="qs-go" aria-hidden="true">' + ICON_ENTER + '</span></div>';
         });
+        listEl.innerHTML = html;
+        countEl.textContent = shown.length + (shown.length === 1 ? ' agent' : ' agents');
+        inputEl.setAttribute('aria-activedescendant', 'qs-opt-' + selectedIndex);
+    }
+
+    function setSelected(idx, scroll) {
+        if (!shown.length) return;
+        var n = shown.length;
+        idx = ((idx % n) + n) % n;                       // wraps around
+        var items = listEl.querySelectorAll('.qs-item');
+        if (items[selectedIndex]) { items[selectedIndex].classList.remove('is-selected'); items[selectedIndex].setAttribute('aria-selected', 'false'); }
+        selectedIndex = idx;
+        var el = items[idx];
+        if (el) {
+            el.classList.add('is-selected');
+            el.setAttribute('aria-selected', 'true');
+            inputEl.setAttribute('aria-activedescendant', el.id);
+            if (scroll) el.scrollIntoView({ block: 'nearest' });
+        }
     }
 
     function onKeyDown(e) {
-        if (e.key === 'Escape') {
-            e.preventDefault();
-            closeOverlay();
-            return;
-        }
-
-        if (e.key === 'ArrowDown') {
-            e.preventDefault();
-            if (filteredAgents.length === 0) return;
-            selectedIndex = Math.min(selectedIndex + 1, filteredAgents.length - 1);
-            renderDropdown(filteredAgents);
-            return;
-        }
-
-        if (e.key === 'ArrowUp') {
-            e.preventDefault();
-            if (filteredAgents.length === 0) return;
-            selectedIndex = Math.max(selectedIndex - 1, 0);
-            renderDropdown(filteredAgents);
-            return;
-        }
-
+        if (e.isComposing) return;
+        if (e.key === 'Escape') { e.preventDefault(); closeOverlay(); return; }
+        if (e.key === 'ArrowDown') { e.preventDefault(); setSelected(selectedIndex + 1, true); return; }
+        if (e.key === 'ArrowUp')   { e.preventDefault(); setSelected(selectedIndex - 1, true); return; }
+        if (e.key === 'Home' && e.ctrlKey) { e.preventDefault(); setSelected(0, true); return; }
+        if (e.key === 'End' && e.ctrlKey)  { e.preventDefault(); setSelected(shown.length - 1, true); return; }
+        if (e.key === 'Tab') { e.preventDefault(); setSelected(selectedIndex + (e.shiftKey ? -1 : 1), true); return; }   // focus stays in the input
         if (e.key === 'Enter') {
             e.preventDefault();
-            if (filteredAgents.length > 0 && selectedIndex >= 0 && selectedIndex < filteredAgents.length) {
-                selectAgent(filteredAgents[selectedIndex]);
-            }
+            if (shown[selectedIndex]) selectAgent(shown[selectedIndex], e.metaKey || e.ctrlKey);
         }
     }
 
-    function selectAgent(agent) {
+    // Soft switch (no page reload) when already on an agent page; otherwise a normal navigation.
+    function selectAgent(agent, newTab) {
+        if (!agent) return;
+        var url = '/agents/' + encodeURIComponent(agent.id);
         closeOverlay();
-        window.location.href = '/agents/' + agent.id;
+        if (newTab) { window.open(url, '_blank', 'noopener'); return; }
+        if (agent.id === currentAgentId()) return;
+        if (typeof window.softSwitchAgent === 'function' && currentAgentId()) {
+            Promise.resolve(window.softSwitchAgent(agent.id)).then(function (ok) { if (ok === false) location.href = url; })
+                .catch(function () { location.href = url; });
+            return;
+        }
+        location.href = url;
     }
 
     // Deterministic color from agent id hash
@@ -280,11 +272,11 @@
         // Ctrl+G or Cmd+G
         if ((e.ctrlKey || e.metaKey) && e.key === 'g') {
             e.preventDefault();
-            showOverlay();
+            if (isOpen()) closeOverlay(); else showOverlay();      // the shortcut toggles
         }
 
         // Escape to close overlay when it's open
-        if (e.key === 'Escape' && overlayEl && overlayEl.style.display === 'flex') {
+        if (e.key === 'Escape' && isOpen()) {
             // handled by onKeyDown on input, but double-guard
             closeOverlay();
         }

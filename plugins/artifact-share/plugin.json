@@ -1,0 +1,61 @@
+{
+  "id": "artifact-share",
+  "name": "Artifact Share",
+  "version": "1.0.0",
+  "description": "Cross-agent binary artifact sharing. Adds the share_artifact agent tool and the /plugin/artifact-share/dl/<token> download endpoint. A share is delivered either as a direct host-local filesystem path (only when both agents provably run on the same Evonic host) or as a short-lived, single-use tokenized HTTPS download URL. Messages never carry binary data.",
+  "author": "Evonic",
+  "enabled": true,
+  "events": [],
+  "tools_file": "tools.json",
+  "variables": [
+    {
+      "name": "ENABLED",
+      "label": "Enabled",
+      "type": "boolean",
+      "default": true,
+      "description": "Kill switch. When disabled, share_artifact and the download endpoint both fail closed."
+    },
+    {
+      "name": "PUBLIC_BASE_URL",
+      "label": "Public Base URL",
+      "type": "string",
+      "default": "",
+      "description": "Externally reachable origin used to build download URLs, without a trailing slash (e.g. https://agents.example.com). Falls back to the EVONIC_PUBLIC_URL environment variable, then to http://127.0.0.1:8080 when unset."
+    },
+    {
+      "name": "TOKEN_TTL_SECONDS",
+      "label": "Token TTL (seconds)",
+      "type": "number",
+      "default": 300,
+      "description": "Lifetime of a tokenized download URL. Default and expected value is 300 seconds (5 minutes)."
+    },
+    {
+      "name": "MAX_MB",
+      "label": "Maximum share size (MB)",
+      "type": "number",
+      "default": 100,
+      "description": "Largest artifact that may be shared. Default 100 MB. Host-local direct-path shares use the same bound."
+    },
+    {
+      "name": "SPOOL_DIR",
+      "label": "Spool directory",
+      "type": "string",
+      "default": "",
+      "description": "Server-side directory holding opaque snapshots of shared artifacts until downloaded or expired. Defaults to <APP_ROOT>/data/spool/artifact_share."
+    },
+    {
+      "name": "SPOOL_QUOTA_MB",
+      "label": "Spool quota (MB)",
+      "type": "number",
+      "default": 2048,
+      "description": "Maximum total bytes the spool may hold before new URL shares are refused."
+    },
+    {
+      "name": "ALLOWED_EXTENSIONS",
+      "label": "Allowed extensions",
+      "type": "string",
+      "default": "",
+      "description": "Optional comma-separated allowlist of file extensions (e.g. .pdf,.png,.zip). Empty allows any file type."
+    }
+  ]
+}

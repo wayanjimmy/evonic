@@ -1,11 +1,11 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="bg-white dark:bg-gray-800 p-6 shadow-lg">
+<div class="ev-page p-4 md:p-6">
     {% include "partials/evaluate_subnav.html" %}
 
     <!-- Controls -->
-    <div class="mb-6 px-4 py-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700">
+    <div class="ev-card ev-controls mb-6">
         <!-- Row 1: Title + Buttons -->
         <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
             <h2 class="text-gray-800 text-lg font-bold m-0 leading-tight dark:text-gray-100">LLM Evaluation Dashboard</h2>
@@ -65,6 +65,7 @@
     <div class="flex flex-col lg:flex-row gap-6 mt-6">
         <!-- LEFT: Matrix + Summary -->
         <div class="flex-1 min-w-0">
+            <div class="ev-card ev-matrix">
             <!-- Matrix Header (desktop only) -->
             <div class="hidden md:grid md:grid-cols-[40px_160px_repeat(5,1fr)_120px] gap-2 bg-gray-50 dark:bg-gray-700/50 dark:text-gray-300 font-semibold rounded-t-lg text-sm">
                 <div class="flex items-center justify-center p-2"><input type="checkbox" id="select-all" checked onclick="toggleAllDomains(this.checked)" title="Select/Deselect All"></div>
@@ -114,6 +115,8 @@
             </div>
             {% endfor %}
 
+            </div>
+
             {% if status.run_info and status.run_info.summary and status.status == 'completed' %}
             {% set score = status.run_info.overall_score * 100 %}
             {% set score_color = 'text-emerald-600' if score >= 80 else ('text-amber-600' if score >= 60 else 'text-red-600') %}
@@ -162,11 +165,6 @@
 
                     <!-- Overall Score Highlight Card (Right) -->
                     <div class="relative overflow-hidden rounded-2xl bg-gradient-to-br {{ score_bg }} shadow-lg p-6 text-white">
-                        <div class="absolute top-0 right-0 w-32 h-32 opacity-10">
-                            <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
-                                <circle cx="100" cy="100" r="80" fill="none" stroke="white" stroke-width="12"/>
-                            </svg>
-                        </div>
                         <div class="relative z-10 flex flex-col sm:flex-row items-center justify-between gap-4">
                             <div class="text-center sm:text-left">
                                 <div class="flex items-center justify-center sm:justify-start gap-2 mb-1">
@@ -217,7 +215,7 @@
 
         <!-- RIGHT: Logs sidebar -->
         <div class="w-full lg:w-[40%] lg:shrink-0">
-            <div class="lg:sticky lg:top-4 bg-slate-800 text-slate-200 p-4 rounded-lg font-mono">
+            <div class="ev-logs lg:sticky lg:top-4 text-slate-200 p-4 font-mono">
                 <h3 class="mb-3 pb-2 border-b border-slate-600 text-slate-400 text-sm font-semibold">Real-Time Logs</h3>
                 <div id="log-box" class="log-content min-h-[100px] max-h-[400px] lg:max-h-[calc(100vh-8rem)] overflow-y-auto overflow-x-hidden text-xs leading-relaxed whitespace-pre-wrap"></div>
             </div>
@@ -273,26 +271,24 @@ function loadModels() {
     .then(response => response.json())
     .then(data => {
         const models = data.models || [];
-        selector.innerHTML = '';
         if (models.length === 0) {
             selector.innerHTML = '<option value="" disabled selected>No models found</option>';
             return;
         }
-        models.forEach(model => {
-            const option = document.createElement('option');
-            option.value = model.model_name;
-            option.textContent = model.name;
-            selector.appendChild(option);
-        });
-        
         // Try to restore saved selection
         const savedModel = localStorage.getItem('eval_selected_model');
-        if (savedModel && Array.from(selector.options).some(opt => opt.value === savedModel)) {
-            selector.value = savedModel;
-        } else if (configModel) {
-            const configOpt = Array.from(selector.options).find(opt => opt.value === configModel);
-            if (configOpt) selector.value = configModel;
+        let selected = null;
+        if (savedModel && models.some(m => m.model_name === savedModel)) {
+            selected = savedModel;
+        } else if (configModel && models.some(m => m.model_name === configModel)) {
+            selected = configModel;
         }
+        ui.populateModelSelect(selector, models, {
+            valueFor: m => m.model_name,
+            labelFor: m => m.name,
+            emptyLabel: null,
+            selectedValue: selected
+        });
     })
     .catch(err => {
         console.error('Failed to load models:', err);
@@ -834,11 +830,6 @@ function fetchSummary() {
 
                 <!-- Overall Score Highlight Card (Right) -->
                 <div class="relative overflow-hidden rounded-2xl bg-gradient-to-br ${score_bg} shadow-lg p-6 text-white">
-                    <div class="absolute top-0 right-0 w-32 h-32 opacity-10">
-                        <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
-                            <circle cx="100" cy="100" r="80" fill="none" stroke="white" stroke-width="12"/>
-                        </svg>
-                    </div>
                     <div class="relative z-10 flex flex-col sm:flex-row items-center justify-between gap-4">
                         <div class="text-center sm:text-left">
                             <div class="flex items-center justify-center sm:justify-start gap-2 mb-1">
@@ -2080,7 +2071,7 @@ input[type="checkbox"] {
 .status-badge {
     display: inline-block;
     padding: 0.25rem 0.75rem;
-    border-radius: 20px;
+    border-radius: 14px;
     font-size: 0.85rem;
     font-weight: 500;
 }
@@ -2104,5 +2095,74 @@ input[type="checkbox"] {
     background: #fef3c7;
     color: #92400e;
 }
+
+/* ══ Evaluate: same language as the other pages (cards on the page colour, pill controls, indigo accent, no gradients) ══ */
+input[type="checkbox"] { accent-color: #6366f1; }
+.ev-page { max-width: 1600px; margin: 0 auto; }
+.ev-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 1rem; box-shadow: 0 1px 2px rgb(15 23 42 / .04); }
+html.dark .ev-card { background: var(--bg-card); border-color: rgb(148 163 184 / .16); box-shadow: none; }
+.ev-controls { padding: 1.125rem 1.25rem; }
+.ev-controls h2 { font-size: 1.125rem; letter-spacing: -.01em; }
+
+/* controls: pill select + pill buttons */
+.ev-page #model-selector { height: 2.5rem; padding: 0 2rem 0 1rem; border-radius: 9999px; font-size: .8125rem; border: 1px solid #e5e7eb; background: rgb(255 255 255 / .85); color: #1f2937; outline: none; transition: border-color .15s, box-shadow .15s; }
+html.dark .ev-page #model-selector { border-color: #374151 !important; background: rgb(10 15 28 / .6) !important; color: #e5e7eb !important; }
+.ev-page #model-selector:focus { border-color: #818cf8 !important; box-shadow: 0 0 0 3px rgb(99 102 241 / .16); }
+.ev-page #toggle-btn, .ev-page #clear-btn, .ev-page #resume-btn { height: 2.5rem; padding: 0 1.25rem; border-radius: 9999px; font-size: .8125rem; font-weight: 600; border: 1px solid transparent;
+    transition: background-color .15s, color .15s, border-color .15s, transform .12s; }
+.ev-page #toggle-btn:active, .ev-page #clear-btn:active, .ev-page #resume-btn:active { transform: scale(.97); }
+.ev-page #toggle-btn { background: #4f46e5 !important; color: #fff !important; }
+.ev-page #toggle-btn:hover { background: #4338ca !important; }
+html.dark .ev-page #toggle-btn { background: #6366f1 !important; }
+html.dark .ev-page #toggle-btn:hover { background: #7c7ff5 !important; }
+.ev-page #toggle-btn[data-status="running"] { background: rgb(239 68 68 / .12) !important; color: #dc2626 !important; border-color: rgb(239 68 68 / .4); }
+.ev-page #toggle-btn[data-status="running"]:hover { background: #ef4444 !important; color: #fff !important; border-color: #ef4444; }
+html.dark .ev-page #toggle-btn[data-status="running"] { color: #fca5a5 !important; }
+.ev-page #clear-btn { background: transparent !important; color: #475569 !important; border-color: rgb(148 163 184 / .4); }
+.ev-page #clear-btn:hover { background: rgb(148 163 184 / .14) !important; }
+html.dark .ev-page #clear-btn { color: #cbd5e1 !important; }
+.ev-page #resume-btn { background: rgb(16 185 129 / .12) !important; color: #047857 !important; border-color: rgb(16 185 129 / .4); }
+.ev-page #resume-btn:hover { background: #10b981 !important; color: #fff !important; }
+html.dark .ev-page #resume-btn { color: #6ee7b7 !important; }
+
+/* progress: solid accent (no gradient) */
+.ev-page #progress-fill { background-image: none !important; background-color: #6366f1 !important; border-radius: 9999px; }
+.ev-page #progress-fill + * , .ev-page #progress-fill { transition: width .3s ease; }
+
+/* matrix */
+.ev-matrix { overflow: hidden; }
+.ev-matrix > div:first-child { border-radius: 0 !important; background: rgb(148 163 184 / .08) !important; border-bottom: 1px solid rgb(148 163 184 / .2); font-size: .6875rem; letter-spacing: .06em; text-transform: uppercase; color: #64748b; }
+html.dark .ev-matrix > div:first-child { color: #94a3b8; }
+.ev-matrix > [id^="row-"] { border-radius: 0 !important; border-color: rgb(148 163 184 / .16) !important; background: transparent !important; transition: background-color .15s; }
+.ev-matrix > [id^="row-"]:last-child { border-bottom: 0 !important; }
+.ev-matrix > [id^="row-"]:hover { background: rgb(99 102 241 / .04) !important; }
+.ev-matrix .level-cell { border-radius: .625rem; }
+.ev-matrix .level-cell:hover { background: rgb(99 102 241 / .1) !important; }
+html.dark .ev-matrix .level-cell:hover { background: rgb(129 140 248 / .16) !important; }
+.ev-matrix [id^="total-"]:not([id^="total-score"]):not([id^="total-passed"]):not([id^="total-duration"]) { border-radius: .625rem !important; background: rgb(148 163 184 / .08) !important; }
+@media (min-width: 768px) { .ev-matrix [id^="total-"]:not([id^="total-score"]):not([id^="total-passed"]):not([id^="total-duration"]) { margin: .375rem .5rem .375rem 0; } }
+@media (max-width: 767.98px) { .ev-matrix > [id^="row-"] { padding: .75rem; } }
+
+/* summary cards: same radius family, flat semantic colour for the score card */
+.ev-page #summary-box > div > div { border-radius: 1rem !important; }
+.ev-page #summary-box [class*="from-emerald-500"] { background-image: none !important; background-color: #059669; }
+.ev-page #summary-box [class*="from-amber-500"] { background-image: none !important; background-color: #d97706; }
+.ev-page #summary-box [class*="from-red-500"] { background-image: none !important; background-color: #dc2626; }
+.ev-page #summary-box .bg-white { background: #fff; }
+html.dark .ev-page #summary-box > div > div:first-child { background: var(--bg-card); border-color: rgb(148 163 184 / .16); box-shadow: none; }
+.ev-page #interrupted-box { border-radius: 1rem !important; }
+
+/* summary + score: stacked unless there is room for two columns; the verdict pill never wraps */
+@media (max-width: 1535.98px) { .ev-page #summary-box > .grid { grid-template-columns: 1fr !important; } }
+.ev-page #summary-box .rounded-full { white-space: nowrap; }
+
+/* logs: terminal card in the page's darkest tone */
+.ev-logs { background: #0a0f1c; border: 1px solid rgb(148 163 184 / .16); border-radius: 1rem; box-shadow: 0 1px 2px rgb(0 0 0 / .2); }
+html:not(.dark) .ev-logs { background: #111827; }
+.ev-logs h3 { border-color: rgb(148 163 184 / .2) !important; letter-spacing: .02em; }
+.ev-logs #log-box { scrollbar-width: thin; scrollbar-color: rgb(148 163 184 / .3) transparent; }
+
+/* completion modal */
+#completion-modal > div { border-radius: 1.25rem; }
 </style>
 {% endblock %}

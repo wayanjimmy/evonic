@@ -32,8 +32,8 @@ def execute(agent: dict, args: dict) -> dict:
         return {'status': 'error', 'message': f'Task {task_id} not found'}
 
     task_assignee = task.get('assignee')
-    if not task_assignee and not agent.get('is_super'):
-        return {'status': 'error', 'message': 'This task has no assignee. Use kanban_update_task to assign it to yourself first, then update the status.'}
+    if not task_assignee:
+        return {'status': 'error', 'message': 'This task has no assignee. Assign it before updating its status.'}
     parent_id = agent.get('parent_id', '')
     is_parent_of_assignee = _is_subagent_of(task_assignee, agent_id)
     if task_assignee != agent_id and task_assignee != parent_id and not is_parent_of_assignee and not agent.get('is_super'):

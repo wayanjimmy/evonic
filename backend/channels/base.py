@@ -1,5 +1,6 @@
 """Base channel abstraction."""
 
+import os
 import re
 import time
 import threading
@@ -13,6 +14,30 @@ _SYSTEM_TAG_RE = re.compile(r'\[(?:SYSTEM(?:/[^\]]*)?|System/[^\]]*)\]\s*')
 def strip_system_tags(text: str) -> str:
     """Remove SYSTEM tags from user-supplied channel messages to prevent impersonation."""
     return _SYSTEM_TAG_RE.sub('', text).strip()
+
+
+_attachment_stamp_lock = threading.Lock()
+_last_attachment_stamp = 0
+
+
+def unique_attachment_path(target_dir: str, name: str) -> str:
+    """Return a fresh ``<target_dir>/<stamp>_<name>`` path for an inbound attachment.
+
+    A per-second prefix let media that arrived in the same second (a burst of
+    WhatsApp photos) overwrite each other while every DB row still pointed at
+    the shared file. The stamp is a strictly increasing nanosecond counter, so
+    two attachments saved by this process never share a name, and an existing
+    file (another process) is skipped. Creates *target_dir* if missing.
+    """
+    global _last_attachment_stamp
+    os.makedirs(target_dir, exist_ok=True)
+    while True:
+        with _attachment_stamp_lock:
+            stamp = max(time.time_ns(), _last_attachment_stamp + 1)
+            _last_attachment_stamp = stamp
+        path = os.path.join(target_dir, f"{stamp}_{name}")
+        if not os.path.exists(path):
+            return path
 
 
 class BaseChannel(ABC):

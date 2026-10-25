@@ -175,6 +175,23 @@ def api_update_run_summary(run_id):
     return jsonify({'success': True})
 
 
+@history_bp.route('/api/run/<int:run_id>/model-name', methods=['PATCH'])
+def api_update_run_model_name(run_id):
+    """Update the model name for a specific evaluation run"""
+    data = request.get_json(silent=True)
+    if data is None or 'model_name' not in data:
+        return jsonify({'error': 'Missing model_name field'}), 400
+    model_name = (data['model_name'] or '').strip() if isinstance(data['model_name'], str) else ''
+    if not model_name:
+        return jsonify({'error': 'Model name cannot be empty'}), 400
+    if len(model_name) > 200:
+        return jsonify({'error': 'Model name is too long (max 200 characters)'}), 400
+    success = db.update_run_model_name(run_id, model_name)
+    if not success:
+        return jsonify({'error': 'Run not found'}), 404
+    return jsonify({'success': True, 'model_name': model_name})
+
+
 @history_bp.route('/api/run/<int:run_id>/matrix')
 def api_run_matrix(run_id):
     """Get test matrix for a specific run (same format as /api/evaluator/test_matrix)"""

@@ -12,9 +12,31 @@ TunnelWorkplaceBackend, and runs the JSON-RPC message loop.
 import json
 import logging
 import datetime
+import ipaddress
 import threading
 
 _logger = logging.getLogger(__name__)
+
+_MAX_DEVICE_IPS = 4
+
+
+def _parse_device_ips(header: str) -> str:
+    """Normalize an X-Device-IPs header to a comma-separated list of valid IPs.
+
+    The header is client-supplied, so anything that is not an IP address is
+    dropped and the list is capped. Returns '' when nothing valid remains.
+    """
+    ips = []
+    for part in (header or '').split(','):
+        try:
+            ip = str(ipaddress.ip_address(part.strip()))
+        except ValueError:
+            continue
+        if ip not in ips:
+            ips.append(ip)
+        if len(ips) >= _MAX_DEVICE_IPS:
+            break
+    return ', '.join(ips)
 
 
 def _version_gte(version: str, minimum: str) -> bool:
@@ -67,13 +89,15 @@ class ConnectorRelay:
         device_name = flask_request.headers.get('X-Device-Name', '').strip() or connector.get('device_name') or 'unknown'
         platform = flask_request.headers.get('X-Platform', '').strip() or connector.get('platform') or 'unknown'
         version = flask_request.headers.get('X-Evonet-Version', '').strip() or connector.get('version') or ''
+        # Device-reported, because remote_addr is only the tunnel/NAT hop
+        ip_addresses = _parse_device_ips(flask_request.headers.get('X-Device-IPs', '')) or connector.get('ip_addresses') or ''
         caps = flask_request.headers.get('X-Evonet-Caps', '')
         # Only clients that deduplicate requests by id may receive a re-sent
         # request after a reconnect; older clients would double-execute.
         replay_ok = 'idempotent-replay' in caps or _version_gte(version, '1.2.0')
         _logger.info(
-            "Evonet accepted: workplace=%s device=%s platform=%s addr=%s replay_ok=%s",
-            workplace_id, device_name, platform, remote_addr, replay_ok,
+            "Evonet accepted: workplace=%s device=%s platform=%s addr=%s device_ips=%s replay_ok=%s",
+            workplace_id, device_name, platform, remote_addr, ip_addresses or '-', replay_ok,
         )
 
         with self._lock:
@@ -86,6 +110,7 @@ class ConnectorRelay:
                 'device_name': device_name,
                 'platform': platform,
                 'version': version,
+                'ip_addresses': ip_addresses,
             })
             from backend.workplaces.manager import workplace_manager
             workplace_manager.on_connector_connected(workplace_id, ws, replay_ok=replay_ok)

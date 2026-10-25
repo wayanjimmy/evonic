@@ -8,35 +8,25 @@
     </p>
 </div>
 
-<div class="flex flex-col md:grid md:grid-cols-2">
-    <div>
-        <div class="flex items-center gap-3 mb-4">
-            <input
-                id="tools-filter"
-                type="text"
-                placeholder="Filter tools…"
-                oninput="settingsTools.filter()"
-                class="flex-1 border border-gray-300 dark:border-gray-600 rounded-md px-3 py-2 text-sm bg-white dark:bg-gray-700 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-400"
-            />
-            <span
-                id="tools-count"
-                class="text-xs text-gray-400 whitespace-nowrap"
-            ></span>
-        </div>
-
-        <div id="tools-list">
-            <!-- Tools are rendered here -->
-        </div>
+<div class="st-toolbar">
+    <div class="st-search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+        <input id="tools-filter" type="text" placeholder="Filter tools…" oninput="settingsTools.filter()" autocomplete="off" aria-label="Filter tools" />
     </div>
+    <span id="tools-count" class="st-count"></span>
+</div>
+
+<div id="tools-list" class="st-grid">
+    <!-- Tools are rendered here -->
 </div>
 <div
     id="tools-pagination"
-    class="flex items-center justify-center gap-2 mt-4 hidden"
+    class="flex items-center justify-center gap-3 mt-5 hidden"
 >
     <button
         onclick="settingsTools.goPage(settingsTools.page - 1)"
         id="tools-prev"
-        class="px-3 py-1.5 rounded-md text-sm border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+        class="ev-btn"
     >
         &larr; Prev
     </button>
@@ -44,7 +34,7 @@
     <button
         onclick="settingsTools.goPage(settingsTools.page + 1)"
         id="tools-next"
-        class="px-3 py-1.5 rounded-md text-sm border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+        class="ev-btn"
     >
         Next &rarr;
     </button>

@@ -10,18 +10,20 @@ New backends (E2B, etc.) plug in without changing this file.
 """
 
 import logging
-import re
+from typing import Optional
 
+from backend.tools.lib.agent_env import build_agent_env
 from backend.tools.lib.exec_backend import registry, validate_env_keys
 
-_VALID_ENV_KEY_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
-
 try:
-    from backend.tools.lib.safety_pipeline import get_safety_pipeline, should_skip_safety
+    from backend.tools.lib.safety_pipeline import (
+        get_safety_pipeline, should_skip_safety, verdict_provenance,
+    )
 except ImportError:
     logging.getLogger(__name__).warning("safety_pipeline unavailable — safety checks disabled for bash tool")
     get_safety_pipeline = None
     should_skip_safety = lambda agent: True
+    verdict_provenance = lambda safety: {}
 
 try:
     from backend.tools.lib.heuristic_safety import check_root_filesystem_scan
@@ -45,6 +47,49 @@ def _get_long_running_setting() -> bool:
         return val == '1'
     except Exception:
         return True
+
+
+def _root_fs_scan_guard_enabled() -> bool:
+    """Check whether the root filesystem scan guard is enabled.
+
+    Priority: env var RFS_GUARD_DISABLED=1 force-disables it (config.py).
+    Otherwise, falls back to the 'root_fs_scan_guard_enabled' DB setting
+    (defaults to '1' = enabled; toggled in System > Settings UI).
+    Fails safe to True when config or the database cannot be read.
+    """
+    try:
+        import config as _cfg
+        if not _cfg.ROOT_FS_SCAN_GUARD_ENABLED:
+            return False
+    except Exception:
+        return True
+    try:
+        from models.db import db
+        val = db.get_setting('root_fs_scan_guard_enabled', '1')
+        return val == '1'
+    except Exception:
+        return True
+
+
+def _update_decim_disposition(event_id, result=None, disposition=None):
+    """Record the lifecycle outcome on the matching Decim telemetry event.
+
+    The event id is produced by the safety pipeline and kept internal; it is
+    never returned to the tool caller.  ``disposition`` may be passed explicitly
+    (blocked/approval_requested); otherwise it is derived from the backend
+    ``result`` (executed/execution_failed).  Failures here never affect execution.
+    """
+    if not event_id:
+        return
+    try:
+        from backend.services import decim_safety_telemetry
+        if disposition is None:
+            data = result or {}
+            failed = bool(data.get('error')) or data.get('exit_code', 0) != 0
+            disposition = 'execution_failed' if failed else 'executed'
+        decim_safety_telemetry.update_disposition(event_id, disposition)
+    except Exception:
+        pass
 
 
 def execute(agent: dict, args: dict) -> dict:
@@ -98,11 +143,13 @@ def execute(agent: dict, args: dict) -> dict:
     # Root filesystem scan guard (performance concern, e.g. `find /`, `tree /`).
     # Independent of the safety pipeline on purpose: it fires for ALL agents —
     # including super agents and agents with safety_checker_enabled=0 — because a
-    # full-root scan is a performance hazard regardless of trust. We still honour
-    # `_skip_safety` (set on the post-approval re-execution) so an approved scan
-    # runs instead of re-prompting forever.
+    # full-root scan is a performance hazard regardless of trust. It therefore has its
+    # own switch (RFS_GUARD_DISABLED=1 env var force-disables it; otherwise the
+    # root_fs_scan_guard_enabled DB setting toggled in System > Settings applies),
+    # NOT the per-agent safety checker toggle. We still honour `_skip_safety` (set on
+    # the post-approval re-execution) so an approved scan runs without re-prompting.
     # ------------------------------------------------------------------
-    if not should_skip_safety(agent):
+    if _root_fs_scan_guard_enabled() and not should_skip_safety(agent):
         _rfs = check_root_filesystem_scan(script)
         if _rfs:
             return {
@@ -112,25 +159,42 @@ def execute(agent: dict, args: dict) -> dict:
                 'reasons': _rfs['reasons'],
                 'blocked_patterns': _rfs['blocked_patterns'],
                 'approval_info': _rfs['approval_info'],
+                '_safety': {
+                    'source': 'guard', 'mode': 'root_fs_scan', 'level': 'requires_approval',
+                    'decision': 'review', 'model_decision': None, 'confidence': None,
+                    'event_id': None,
+                    'blocked_patterns': list(_rfs['blocked_patterns'])[:6],
+                    'reasons': list(_rfs['reasons'])[:4],
+                },
             }
 
     # ------------------------------------------------------------------
     # HMADS safety check (pipeline: system rules + custom user rules)
     # ------------------------------------------------------------------
-    if get_safety_pipeline is not None and not should_skip_safety(agent) and agent.get('safety_checker_enabled', 1) and not agent.get('is_super'):        safety = get_safety_pipeline().check(script, tool_type='bash', agent_context=agent)
+    if get_safety_pipeline is not None and not should_skip_safety(agent) and agent.get('safety_checker_enabled', 1) and not agent.get('is_super'):
+        safety = get_safety_pipeline().check(script, tool_type='bash', agent_context=agent)
     else:
         safety = {'level': 'safe', 'score': 0, 'reasons': [], 'blocked_patterns': [], 'approval_info': {}}
 
+    # Decim Safety correlation id (internal only; never returned to the caller).
+    _decim_event_id = (safety.get('decim_safety') or {}).get('event_id')
+    # Compact, UI-safe provenance for the chat timeline.  The LLM loop pops it
+    # before the result reaches the model or the user-visible output.
+    _safety_prov = verdict_provenance(safety)
+
     if safety['level'] == 'dangerous':
+        _update_decim_disposition(_decim_event_id, None, 'blocked')
         return {
             'error': 'Execution blocked by heuristic safety system',
             'level': 'dangerous',
             'score': safety['score'],
             'reasons': safety['reasons'],
             'blocked_patterns': safety['blocked_patterns'],
+            '_safety': _safety_prov,
         }
 
     if safety['level'] == 'requires_approval':
+        _update_decim_disposition(_decim_event_id, None, 'approval_requested')
         return {
             'error': 'Script requires manual approval before execution',
             'level': 'requires_approval',
@@ -138,6 +202,7 @@ def execute(agent: dict, args: dict) -> dict:
             'reasons': safety['reasons'],
             'blocked_patterns': safety['blocked_patterns'],
             'approval_info': safety['approval_info'],
+            '_safety': _safety_prov,
         }
 
     if safety['level'] == 'warning':
@@ -151,19 +216,16 @@ def execute(agent: dict, args: dict) -> dict:
 
     env = args.get('env') or {}
     if not isinstance(env, dict):
-        return {'error': "'env' must be an object (dict) of string key-value pairs."}
+        return {'error': "'env' must be an object (dict) of string key-value pairs.",
+                '_safety': _safety_prov}
 
     # Auto-inject agent variables as environment variables (base layer).
     # LLM-specified env takes priority over agent variables.
-    agent_vars = (agent or {}).get('variables') or {}
-    if agent_vars:
-        base = {k: str(v) for k, v in agent_vars.items() if _VALID_ENV_KEY_RE.match(k)}
-        base.update(env)
-        env = base
+    env = {**build_agent_env(agent), **env}
 
     env, err = validate_env_keys(env)
     if err:
-        return {'error': err}
+        return {'error': err, '_safety': _safety_prov}
 
     # ------------------------------------------------------------------
     # Dispatch to active backend
@@ -171,10 +233,13 @@ def execute(agent: dict, args: dict) -> dict:
     backend = registry.get_backend(session_id, agent)
     result = backend.run_bash(script, timeout, env)
 
+    # Best-effort lifecycle disposition for Decim telemetry (internal only).
+    _update_decim_disposition(_decim_event_id, result)
+
     # Identify background spawns so the agent can attach a monitor to them.
     # Registration is silent — nothing watches or notifies on its own.
     try:
-        job = _track_background_spawn(session_id, script, result)
+        job = _track_background_spawn(session_id, script, result, agent)
         if job:
             result['background_job'] = {
                 'job_id': job.job_id,
@@ -186,10 +251,16 @@ def execute(agent: dict, args: dict) -> dict:
             }
     except Exception:
         pass  # Never let job tracking break command execution
+
+    # Provenance travels out-of-band: the LLM loop pops `_safety` before the
+    # result is serialized for the model or the user.
+    if isinstance(result, dict):
+        result['_safety'] = _safety_prov
     return result
 
 
-def _track_background_spawn(session_id: str, script: str, result: dict):
+def _track_background_spawn(session_id: str, script: str, result: dict,
+                            agent: Optional[dict] = None):
     """Register a background spawn after successful execution.
 
     Handles both long_running_guard wrapper scripts (BYPASS_MARKER) and the
@@ -201,12 +272,18 @@ def _track_background_spawn(session_id: str, script: str, result: dict):
         return None
 
     from backend.agent_runtime.background_jobs import (
-        parse_wrapper_script, parse_manual_spawn, background_jobs)
+        parse_wrapper_script, parse_manual_spawn, background_jobs,
+        snapshot_backend_ctx)
+
+    # Capture which sandbox this ran in so a monitor attached later polls the
+    # SAME one (its persisted schedule only has agent_id and would otherwise
+    # resolve — or recreate — a different sandbox).
+    backend_ctx = snapshot_backend_ctx(agent or {})
 
     _spawn = parse_wrapper_script(script) or parse_manual_spawn(script)
     if not _spawn:
         return None
-    return background_jobs.register(session_id, **_spawn)
+    return background_jobs.register(session_id, backend_ctx=backend_ctx, **_spawn)
 
 
 # ---------------------------------------------------------------------------

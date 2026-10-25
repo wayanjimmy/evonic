@@ -25,6 +25,10 @@ class PendingApproval:
     created_at: float = field(default_factory=time.time)
     decision_event: threading.Event = field(default_factory=threading.Event)
     decision: Optional[str] = None  # 'approve' or 'reject'
+    # Who decided: 'user:web' | 'user:telegram' | 'user:whatsapp' | 'user:discord'
+    # | 'agent:<agent_id>' | 'timeout'.  Surfaced in the chat timeline so an
+    # automated decision is never mistaken for a human one.
+    resolved_by: Optional[str] = None
 
 
 class ApprovalRegistry:
@@ -54,13 +58,15 @@ class ApprovalRegistry:
             self._by_session[session_id] = approval_id
         return pa
 
-    def resolve(self, approval_id: str, decision: str) -> bool:
+    def resolve(self, approval_id: str, decision: str,
+                resolved_by: Optional[str] = None) -> bool:
         """Set the decision and signal the waiting loop thread. Returns False if not found."""
         with self._lock:
             pa = self._pending.get(approval_id)
             if pa is None or pa.decision is not None:
                 return False
             pa.decision = decision
+            pa.resolved_by = resolved_by
         pa.decision_event.set()
         return True
 
@@ -92,6 +98,7 @@ class ApprovalRegistry:
                 'approval_info': sr.get('approval_info', {}),
                 'reasons': sr.get('reasons', []),
                 'score': sr.get('score'),
+                'safety': sr.get('_safety') or {},
                 'created_at': pa.created_at,
             })
         return out

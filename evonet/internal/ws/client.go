@@ -38,7 +38,8 @@ type Client struct {
 	cfg               *config.Config
 	exec              *executor.Executor
 	conn              *websocket.Conn
-	mu                sync.Mutex
+	mu                sync.Mutex // protects conn and connection-scoped state
+	writeMu           sync.Mutex // serializes gorilla/websocket writers
 	running           atomic.Bool
 	stopCh            chan struct{}
 	stopOnce          sync.Once
@@ -68,9 +69,20 @@ func (c *Client) Run() {
 	for c.running.Load() {
 		connectedAt := time.Now()
 		if err := c.connect(); err != nil {
-			log.Printf("[evonet] Connection failed: %v", err)
+			// A dial cancelled by Stop() is an expected outcome, not a failure.
+			if c.running.Load() {
+				log.Printf("[evonet] Connection failed: %v", err)
+			}
 		} else {
 			log.Printf("[evonet] Connected to %s (home: %s)", c.cfg.ServerURL, c.cfg.HomeName)
+			// A stop may have been requested while the dial was in flight (the
+			// dial itself is cancelled by Stop, but it can still win the race).
+			// Never adopt a connection we are already trying to abandon, or the
+			// process would sit in messageLoop() forever with running == false.
+			if !c.running.Load() {
+				c.Stop()
+				return
+			}
 			if c.OnConnected != nil {
 				c.OnConnected()
 			}
@@ -112,14 +124,18 @@ func (c *Client) RunOnce() error {
 	return nil
 }
 
-// Stop signals the client to disconnect and stop reconnecting.
+// Stop signals the client to disconnect and stop reconnecting. It detaches the
+// active connection before closing it, so callers never wait for a potentially
+// blocked WebSocket write to finish.
 func (c *Client) Stop() {
 	c.running.Store(false)
 	c.stopOnce.Do(func() { close(c.stopCh) })
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.conn != nil {
-		c.conn.Close()
+	conn := c.conn
+	c.conn = nil
+	c.mu.Unlock()
+	if conn != nil {
+		_ = conn.Close()
 	}
 }
 
@@ -143,6 +159,24 @@ func newDialer() *websocket.Dialer {
 	return &dialer
 }
 
+// dialContext returns a context that is cancelled as soon as the client is
+// stopped. Feed it to DialContext so an in-flight connect attempt is abandoned
+// immediately instead of holding shutdown for the whole TCP/TLS handshake.
+func (c *Client) dialContext() (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(context.Background())
+	if c.stopCh == nil {
+		return ctx, cancel
+	}
+	go func() {
+		select {
+		case <-c.stopCh:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	return ctx, cancel
+}
+
 func (c *Client) connect() error {
 	url := c.wsURL()
 	header := http.Header{}
@@ -153,11 +187,17 @@ func (c *Client) connect() error {
 	header.Set("X-Device-Name", hostname)
 	header.Set("X-Platform", runtime.GOOS)
 	header.Set("X-Evonet-Version", version.Version)
+	// The server only sees the tunnel/NAT address, so report our own.
+	if ips := deviceIPs(); len(ips) > 0 {
+		header.Set("X-Device-IPs", strings.Join(ips, ", "))
+	}
 	// Advertise that this client deduplicates requests by id, so the server may
 	// safely re-send an in-flight request after a reconnect (exactly-once).
 	header.Set("X-Evonet-Caps", "idempotent-replay")
 
-	conn, _, err := newDialer().Dial(url, header)
+	ctx, cancel := c.dialContext()
+	defer cancel()
+	conn, _, err := newDialer().DialContext(ctx, url, header)
 	if err != nil {
 		return fmt.Errorf("dial %s: %w", url, err)
 	}
@@ -278,10 +318,15 @@ func (c *Client) heartbeat(conn *websocket.Conn, stop <-chan struct{}) {
 // safeWrite serializes all writes to the connection. gorilla/websocket permits
 // only one concurrent writer, and the read loop, response goroutines and the
 // heartbeat can all write. It also no-ops if conn is no longer the active one.
+// Connection state is deliberately kept separate from the writer lock so Stop
+// can detach and close a blocked connection without waiting for writeTimeout.
 func (c *Client) safeWrite(conn *websocket.Conn, messageType int, data []byte) error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.conn != conn {
+	active := c.conn == conn
+	c.mu.Unlock()
+	if !active {
 		return errors.New("connection superseded")
 	}
 	if err := conn.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
@@ -292,9 +337,12 @@ func (c *Client) safeWrite(conn *websocket.Conn, messageType int, data []byte) e
 }
 
 func (c *Client) safeWriteControl(conn *websocket.Conn, messageType int, data []byte, deadline time.Time) error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.conn != conn {
+	active := c.conn == conn
+	c.mu.Unlock()
+	if !active {
 		return errors.New("connection superseded")
 	}
 	return conn.WriteControl(messageType, data, deadline)

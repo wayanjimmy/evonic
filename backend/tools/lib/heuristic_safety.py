@@ -206,7 +206,9 @@ BASH_DANGEROUS_PATTERNS: list[dict[str, Any]] = [
 # Kept OUT of BASH_DANGEROUS_PATTERNS on purpose: this is a performance guard,
 # not a trust decision, so bash.py runs it via check_root_filesystem_scan()
 # independently of the safety pipeline — i.e. it fires even for super agents and
-# agents with safety_checker_enabled=0. See check_root_filesystem_scan() below.
+# agents with safety_checker_enabled=0. Its own switches are the RFS_GUARD_DISABLED=1
+# env var (config.ROOT_FS_SCAN_GUARD_ENABLED) and the root_fs_scan_guard_enabled DB
+# setting (System > Settings UI); see check_root_filesystem_scan().
 ROOT_FS_SCAN_RULES: list[dict[str, Any]] = [
     {"pattern": r"\bfind\s+/(?:\s|$)", "weight": 8, "category": "root_filesystem_scan", "description": "Root filesystem scan via find (performance concern)"},
     {"pattern": r"\btree\s+/(?:\s|$)", "weight": 8, "category": "root_filesystem_scan", "description": "Root filesystem scan via tree (performance concern)"},
@@ -297,8 +299,10 @@ def check_root_filesystem_scan(code: str) -> dict | None:
     Returned as a requires_approval result so bash.py can halt for human
     confirmation. Deliberately independent of the safety pipeline: bash.py calls
     this regardless of is_super / safety_checker_enabled so the (slow) root scan
-    always prompts. bash.py still gates it on `_skip_safety` so the post-approval
-    re-execution runs without re-prompting.
+    always prompts. The opt-out is the guard's own switch: the root_fs_scan_guard_enabled
+    DB setting (System > Settings UI), or its env var force-disable RFS_GUARD_DISABLED=1
+    (config.ROOT_FS_SCAN_GUARD_ENABLED); bash.py also gates it on `_skip_safety` so the
+    post-approval re-execution runs without re-prompting.
 
     Returns a safety-result-shaped dict on match, else None.
     """

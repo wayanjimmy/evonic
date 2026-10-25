@@ -1,6 +1,36 @@
 {% extends "base.html" %}
 {% from 'partials/toggle.html' import toggle_widget %}
 {% block content %}
+<style>
+/* Endpoint list: search box + tidy rows (method badges in a fixed column, monospace path, muted handler name) */
+.ep-search { position: relative; }
+.ep-search-icon { position: absolute; left: .875rem; top: 50%; width: 1rem; height: 1rem; transform: translateY(-50%); color: #94a3b8; pointer-events: none; }
+.ep-search input { width: 100%; box-sizing: border-box; padding: .625rem .875rem .625rem 2.5rem; border-radius: 12px; border: 1px solid #e5e7eb; background: #f9fafb; color: #1f2937; font-size: .875rem; outline: none;
+    transition: border-color .15s, box-shadow .15s; }
+.ep-search input:focus { border-color: #818cf8; box-shadow: 0 0 0 3px rgb(99 102 241 / .14); }
+html.dark .ep-search input { border-color: #374151; background: rgb(15 23 42 / .6); color: #e5e7eb; }
+.ep-row { display: flex; align-items: flex-start; gap: .875rem; padding: .75rem .875rem; border: 1px solid #e5e7eb; border-radius: 12px; background: #f9fafb; transition: background-color .15s, border-color .15s; }
+.ep-row:hover { border-color: #c7d2fe; background: #f5f7ff; }
+html.dark .ep-row { border-color: rgb(148 163 184 / .16); background: rgb(148 163 184 / .06); }
+html.dark .ep-row:hover { border-color: rgb(129 140 248 / .4); background: rgb(129 140 248 / .08); }
+.ep-methods { flex: none; width: 5rem; display: flex; flex-wrap: wrap; gap: .25rem; padding-top: .0625rem; }
+.ep-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 2.25rem; padding: .125rem .4rem; border-radius: 6px; border: 1px solid transparent;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .6875rem; font-weight: 600; line-height: 1.125rem; background: #eef2ff; color: #4338ca; border-color: #c7d2fe; }
+.ep-badge.get    { background: #ecfdf5; color: #047857; border-color: #a7f3d0; }
+.ep-badge.post   { background: #eef2ff; color: #4338ca; border-color: #c7d2fe; }
+.ep-badge.put, .ep-badge.patch { background: #fffbeb; color: #b45309; border-color: #fde68a; }
+.ep-badge.delete { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
+html.dark .ep-badge.get    { background: rgb(16 185 129 / .14); color: #6ee7b7; border-color: rgb(16 185 129 / .30); }
+html.dark .ep-badge.post   { background: rgb(99 102 241 / .18); color: #a5b4fc; border-color: rgb(99 102 241 / .35); }
+html.dark .ep-badge.put, html.dark .ep-badge.patch { background: rgb(245 158 11 / .16); color: #fcd34d; border-color: rgb(245 158 11 / .32); }
+html.dark .ep-badge.delete { background: rgb(239 68 68 / .16); color: #fca5a5; border-color: rgb(239 68 68 / .32); }
+.ep-main { min-width: 0; flex: 1 1 auto; }
+.ep-path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .875rem; font-weight: 500; line-height: 1.375rem; color: #1f2937; overflow-wrap: anywhere; }
+html.dark .ep-path { color: #e2e8f0; }
+.ep-name { margin-top: .125rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .75rem; color: #64748b; overflow-wrap: anywhere; }
+html.dark .ep-name { color: #94a3b8; }
+@media (max-width: 520px) { .ep-row { flex-direction: column; gap: .5rem; } .ep-methods { width: auto; } }
+</style>
 <div class="p-4 md:p-6">
     <!-- Header -->
     <div class="flex flex-wrap justify-between items-center gap-2 mb-6">
@@ -35,6 +65,9 @@
         <button class="tab-btn flex-shrink-0 whitespace-nowrap px-4 py-2.5 text-sm font-medium border-b-2 border-indigo-500 text-indigo-600" onclick="showTab('settings')" data-tab="settings">Settings</button>
         <button class="tab-btn flex-shrink-0 whitespace-nowrap px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700" onclick="showTab('about')" data-tab="about">About</button>
         <button class="tab-btn flex-shrink-0 whitespace-nowrap px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700" onclick="showTab('logs')" data-tab="logs">Logs</button>
+        {% for tab in tabs %}
+        <button class="tab-btn flex-shrink-0 whitespace-nowrap px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700" onclick="showTab('{{ tab.id }}')" data-tab="{{ tab.id }}">{{ tab.label }}</button>
+        {% endfor %}
     </div>
 
     <!-- Tab: Settings -->
@@ -63,14 +96,35 @@
                 </div>
             </div>
 
-            <!-- Right: Events -->
-            <div>
+            <!-- Right: Runtime capabilities -->
+            <div class="space-y-6">
                 <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600 p-6">
                     <div class="flex justify-between items-center mb-4">
                         <h3 class="text-base font-semibold text-gray-800 dark:text-gray-100">Subscribed Events <span id="event-count" class="text-sm font-normal text-gray-400"></span></h3>
                     </div>
                     <div id="events-list" class="space-y-2">
                         <p class="text-sm text-gray-400">Loading...</p>
+                    </div>
+                </div>
+                <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600 p-6">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-base font-semibold text-gray-800 dark:text-gray-100">HTTP/API Endpoints <span id="endpoint-count" class="text-sm font-normal text-gray-400"></span></h3>
+                    </div>
+                    <div id="endpoints-search-wrap" class="hidden mb-3">
+                        <div class="ep-search">
+                            <svg class="ep-search-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+                            <input id="endpoints-search" type="search" autocomplete="off" placeholder="Search endpoints..." aria-label="Search endpoints">
+                        </div>
+                    </div>
+                    <div id="endpoints-list" class="space-y-2">
+                        <p class="text-sm text-gray-400">Loading...</p>
+                    </div>
+                    <div id="endpoints-pagination" class="hidden items-center justify-between mt-4 pt-3 border-t border-gray-100 dark:border-gray-600">
+                        <span id="endpoints-page-info" class="text-xs text-gray-400"></span>
+                        <div class="flex gap-2">
+                            <button id="endpoints-prev" type="button" aria-label="Previous page" title="Previous" class="inline-flex items-center justify-center p-2 rounded-lg cursor-pointer border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed"><i data-lucide="chevron-left" class="w-4 h-4"></i></button>
+                            <button id="endpoints-next" type="button" aria-label="Next page" title="Next" class="inline-flex items-center justify-center p-2 rounded-lg cursor-pointer border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed"><i data-lucide="chevron-right" class="w-4 h-4"></i></button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -115,6 +169,12 @@ function showTab(name) {
     } else {
         stopLogPolling();
     }
+
+    // Plugin tabs (from *_tab.html) may register a lazy initialiser, run once
+    // on every visit to their tab: window.tabInit_<id>().
+    if (typeof window['tabInit_' + name] === 'function') {
+        try { window['tabInit_' + name](); } catch (e) { console.error('tabInit_' + name, e); }
+    }
 }
 
 // ==================== Plugin Load ====================
@@ -136,6 +196,7 @@ async function loadPlugin() {
 
     renderSettings(pluginData.variables || [], pluginData.config || {});
     renderEvents(pluginData.events || []);
+    renderEndpoints(pluginData.endpoints || []);
     renderReadme(pluginData.readme);
 
     // Show token management section for agentapi plugin
@@ -287,6 +348,109 @@ function renderEvents(events) {
         </div>
     `).join('');
 }
+
+// ==================== HTTP/API Endpoints ====================
+// Endpoint list with client-side search + Previous/Next-only pagination.
+
+const ENDPOINTS_PER_PAGE = 10;
+let allEndpoints = [];
+let endpointsQuery = '';
+let endpointsPage = 1;
+
+function renderEndpoints(endpoints) {
+    allEndpoints = endpoints || [];
+    endpointsQuery = '';
+    endpointsPage = 1;
+
+    const searchWrap = document.getElementById('endpoints-search-wrap');
+    const searchInput = document.getElementById('endpoints-search');
+    if (searchInput) searchInput.value = '';
+    // Search box is only useful once there is something to search.
+    if (searchWrap) searchWrap.classList.toggle('hidden', allEndpoints.length === 0);
+
+    renderEndpointsPage();
+}
+
+function filteredEndpoints() {
+    const q = endpointsQuery.trim().toLowerCase();
+    if (!q) return allEndpoints;
+    return allEndpoints.filter(item => {
+        const haystack = [item.path, item.endpoint, ...(item.methods || [])]
+            .filter(Boolean).join(' ').toLowerCase();
+        return haystack.includes(q);
+    });
+}
+
+function renderEndpointsPage() {
+    const list = document.getElementById('endpoints-list');
+    const count = document.getElementById('endpoint-count');
+    const pager = document.getElementById('endpoints-pagination');
+    const info = document.getElementById('endpoints-page-info');
+    const prevBtn = document.getElementById('endpoints-prev');
+    const nextBtn = document.getElementById('endpoints-next');
+
+    const filtered = filteredEndpoints();
+    const totalPages = Math.max(1, Math.ceil(filtered.length / ENDPOINTS_PER_PAGE));
+    endpointsPage = Math.min(Math.max(1, endpointsPage), totalPages);
+
+    count.textContent = endpointsQuery.trim()
+        ? `(${filtered.length}/${allEndpoints.length})`
+        : `(${allEndpoints.length})`;
+
+    const hidePager = () => { pager.classList.add('hidden'); pager.classList.remove('flex'); };
+
+    if (allEndpoints.length === 0) {
+        list.innerHTML = '<p class="text-sm text-gray-400 text-center py-6">No HTTP/API endpoints registered</p>';
+        hidePager();
+        return;
+    }
+    if (filtered.length === 0) {
+        list.innerHTML = '<p class="text-sm text-gray-400 text-center py-6">No endpoints match your search</p>';
+        hidePager();
+        return;
+    }
+
+    const start = (endpointsPage - 1) * ENDPOINTS_PER_PAGE;
+    list.innerHTML = filtered.slice(start, start + ENDPOINTS_PER_PAGE).map(item => `
+        <div class="ep-row">
+            <div class="ep-methods">
+                ${(item.methods || []).map(method => `<span class="ep-badge ${esc(String(method).toLowerCase())}">${esc(method)}</span>`).join('')}
+            </div>
+            <div class="ep-main">
+                <div class="ep-path">${esc(item.path)}</div>
+                ${item.endpoint ? `<div class="ep-name">${esc(item.endpoint)}</div>` : ''}
+            </div>
+        </div>
+    `).join('');
+
+    // Previous / Next only — no numbered page navigation.
+    if (totalPages > 1) {
+        pager.classList.remove('hidden');
+        pager.classList.add('flex');
+        info.textContent = `Page ${endpointsPage} of ${totalPages}`;
+        prevBtn.disabled = endpointsPage <= 1;
+        nextBtn.disabled = endpointsPage >= totalPages;
+    } else {
+        hidePager();
+    }
+}
+
+function setupEndpointsControls() {
+    const searchInput = document.getElementById('endpoints-search');
+    if (searchInput) {
+        searchInput.addEventListener('input', () => {
+            endpointsQuery = searchInput.value;
+            endpointsPage = 1;
+            renderEndpointsPage();
+        });
+    }
+    const prevBtn = document.getElementById('endpoints-prev');
+    if (prevBtn) prevBtn.addEventListener('click', () => { endpointsPage -= 1; renderEndpointsPage(); });
+    const nextBtn = document.getElementById('endpoints-next');
+    if (nextBtn) nextBtn.addEventListener('click', () => { endpointsPage += 1; renderEndpointsPage(); });
+}
+
+setupEndpointsControls();
 
 // ==================== About / README ====================
 
@@ -552,6 +716,13 @@ window.__evonicModelAgentMap = {{ model_agent_map | tojson }};
         {% include widget %}
         {% endfor %}
     </div>
+
+    {% for tab in tabs %}
+    <!-- Tab: {{ tab.label }} (auto-loaded from {{ tab.file }}) -->
+    <div id="tab-{{ tab.id }}" class="tab-content hidden">
+        {% include tab.file %}
+    </div>
+    {% endfor %}
 
     <!-- Tab: About -->
     <div id="tab-about" class="tab-content hidden">

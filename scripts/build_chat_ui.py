@@ -23,6 +23,8 @@ MODULE_ORDER = [
     'debug.js',
     'lightbox.js',
     'lazy-image.js',
+    'icons.js',
+    'badges.js',
     'renderers.js',
     'artifacts.js',
     'transport.js',

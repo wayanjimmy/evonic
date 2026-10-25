@@ -1,7 +1,6 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div id="toast-container" class="fixed bottom-4 right-4 z-50 flex flex-col gap-2"></div>
 <div class="p-4 md:p-6">
     <!-- Tab Navigation -->
     <div class="flex border-b border-gray-200 dark:border-gray-700 mb-5">
@@ -37,6 +36,10 @@
 
     <!-- Grid -->
     <div id="workplaces-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+    <div id="workplaces-more" class="hidden mt-6 flex flex-col items-center gap-2">
+        <button type="button" onclick="showMoreWorkplaces()" class="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">Show more</button>
+        <p data-more-count class="text-xs text-gray-400"></p>
+    </div>
     <div id="workplaces-empty" class="hidden text-center py-16 text-gray-400">
         <svg class="w-16 h-16 mx-auto mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
         <p class="text-lg font-medium">No workplaces yet</p>
@@ -135,16 +138,6 @@
 </div>
 
 <script>
-function showToast(message, type = 'success') {
-    const container = document.getElementById('toast-container');
-    if (!container) return;
-    const toast = document.createElement('div');
-    toast.className = 'px-4 py-3 rounded-lg shadow-lg text-white font-medium transition-opacity duration-500 ' +
-        (type === 'success' ? 'bg-green-600' : type === 'info' ? 'bg-blue-600' : 'bg-red-600');
-    toast.textContent = message;
-    container.appendChild(toast);
-    setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 500); }, 3000);
-}
 
 const TYPE_LABELS = { local: 'Local', remote: 'Remote SSH', tunnel: 'Tunnel', bwrap: 'Bwrap' };
 const TYPE_COLORS = {
@@ -164,20 +157,27 @@ function statusDot(status) {
     return `<span class="inline-block w-2 h-2 rounded-full ${STATUS_DOT[status] || 'bg-gray-400'}"></span>`;
 }
 
+function esc(s) {
+    const d = document.createElement('div');
+    d.textContent = s == null ? '' : s;
+    return d.innerHTML;
+}
+
 function renderCard(h) {
     const typeLabel = TYPE_LABELS[h.type] || h.type;
     const typeCls = TYPE_COLORS[h.type] || 'bg-gray-100 text-gray-700';
     const status = h.status || 'disconnected';
     const agentCount = h.agent_count || 0;
-    const connectorInfo = h.connector ? `<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">${h.connector.device_name || ''} · ${h.connector.platform || ''}</p>` : '';
+    // device_name / platform come from the Evonet device's headers: never trust them as HTML
+    const connectorInfo = h.connector ? `<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">${esc(h.connector.device_name)} · ${esc(h.connector.platform)}</p>` : '';
     return `
-    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm hover:shadow-md transition-shadow p-5 cursor-pointer" onclick="window.location='/workplaces/${h.id}'">
+    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm hover:shadow-md transition-shadow p-5 cursor-pointer" onclick="window.location='/workplaces/${encodeURIComponent(h.id).replace(/'/g, '%27')}'">
         <div class="flex items-start justify-between gap-2 mb-3">
             <div class="flex-1 min-w-0">
-                <h3 class="font-semibold text-gray-900 dark:text-gray-100 truncate">${h.name}</h3>
+                <h3 class="font-semibold text-gray-900 dark:text-gray-100 truncate">${esc(h.name)}</h3>
                 ${connectorInfo}
             </div>
-            <span class="flex-shrink-0 text-xs font-medium px-2 py-0.5 rounded-full ${typeCls}">${typeLabel}</span>
+            <span class="flex-shrink-0 text-xs font-medium px-2 py-0.5 rounded-full ${typeCls}">${esc(typeLabel)}</span>
         </div>
         <div class="flex items-center gap-4 text-sm text-gray-500 dark:text-gray-400">
             <span class="flex items-center gap-1.5">${statusDot(status)} ${status.charAt(0).toUpperCase() + status.slice(1)}</span>
@@ -186,10 +186,13 @@ function renderCard(h) {
     </div>`;
 }
 
+const WORKPLACE_PAGE = 60; // cards rendered per "Show more" step
 let workplaces = [];
+let workplacesShown = WORKPLACE_PAGE;
 
 function loadWorkplaces() {
-    $.get('/api/workplaces', function(data) {
+    // summary=1: one query, no agent lists, no SSH passwords or connector tokens
+    $.get('/api/workplaces?summary=1', function(data) {
         workplaces = data || [];
         renderWorkplaces();
     });
@@ -198,13 +201,15 @@ function loadWorkplaces() {
 function renderWorkplaces() {
     const grid = $('#workplaces-grid');
     const empty = $('#workplaces-empty');
+    const more = $('#workplaces-more');
     const search = document.getElementById('workplace-search').value.toLowerCase().trim();
     const filtered = search
-        ? workplaces.filter(w => (w.name || w.id).toLowerCase().includes(search) || (w.type || '').toLowerCase().includes(search))
+        ? workplaces.filter(w => [w.name || w.id, w.type, w.connector && w.connector.device_name]
+            .some(v => (v || '').toLowerCase().includes(search)))
         : workplaces;
-    grid.empty();
     if (!filtered.length) {
-        grid.addClass('hidden');
+        grid.empty().addClass('hidden');
+        more.addClass('hidden');
         empty.removeClass('hidden');
         empty.find('p:first-of-type').text(search ? 'No workplaces found' : 'No workplaces yet');
         empty.find('p:last-of-type').text(search ? 'Try a different search term.' : 'Create a workplace to assign execution environments to your agents.');
@@ -212,10 +217,19 @@ function renderWorkplaces() {
     }
     grid.removeClass('hidden');
     empty.addClass('hidden');
-    filtered.forEach(h => grid.append(renderCard(h)));
+    grid.html(filtered.slice(0, workplacesShown).map(renderCard).join(''));
+    const remaining = filtered.length - Math.min(workplacesShown, filtered.length);
+    more.toggleClass('hidden', remaining === 0);
+    more.find('[data-more-count]').text(`Showing ${filtered.length - remaining} of ${filtered.length}`);
 }
 
 function filterWorkplaces() {
+    workplacesShown = WORKPLACE_PAGE;
+    renderWorkplaces();
+}
+
+function showMoreWorkplaces() {
+    workplacesShown += WORKPLACE_PAGE;
     renderWorkplaces();
 }
 

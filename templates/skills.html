@@ -1,89 +1,68 @@
 {% extends "base.html" %}
 {% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/ag-ui.css') }}?v=3">
 <div class="p-4 md:p-6">
     <!-- Header -->
-    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-6">
-        <div>
+    <div class="ag-head flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
+        <div class="flex-1 w-full sm:w-auto">
             <h2 class="text-2xl font-bold text-gray-800 dark:text-gray-100">Skills</h2>
-            <p class="text-sm text-gray-500 mt-1">Manage installable skill packages and agent skillset templates</p>
+            <p class="ag-sub text-sm text-gray-500 mt-1">Manage installable skill packages</p>
         </div>
-        <button onclick="document.getElementById('upload-modal').classList.remove('hidden')"
-                class="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
-            Upload Skill
-        </button>
-    </div>
-
-    <!-- Tabs -->
-    <div class="flex gap-1 mb-6 border-b border-gray-200">
-        <button onclick="switchTab('skills')" id="tab-skills"
-                class="px-4 py-2 text-sm font-medium border-b-2 border-indigo-500 text-indigo-600 transition-colors">
-            Skills
-        </button>
-        <button onclick="switchTab('skillsets')" id="tab-skillsets"
-                class="px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 transition-colors">
-            Skillsets
-        </button>
     </div>
 
     <!-- Skills Tab -->
     <div id="panel-skills">
-        <!-- Search Bar -->
-        <div class="flex flex-col sm:flex-row gap-3 mb-6">
-            <div class="relative">
-                <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-                <input type="search" id="skill-search" name="skill_search_filter" placeholder="Search skills..." oninput="filterSkills()" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')"
-                       class="w-full sm:w-64 pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10">
+        <div class="ag-toolbar flex flex-col sm:flex-row gap-3 mb-6">
+            <div class="ag-search-wrap relative">
+                <svg class="ag-search-ico" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                <input type="search" id="skill-search" name="skill_search_filter" placeholder="Search skills..." oninput="filterSkills()" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')" class="ag-search">
             </div>
-        </div>
-        <!-- Skills Grid -->
-        <div id="skills-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-            <!-- Populated by JS -->
+            <button type="button" onclick="document.getElementById('upload-modal').classList.remove('hidden')" class="ag-btn ag-btn-primary" title="Upload Skill" aria-label="Upload Skill">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5"/><path d="M12 3v12"/></svg>
+                <span class="ag-btn-label">Upload Skill</span>
+            </button>
         </div>
 
-        <div id="empty-state" class="hidden text-center py-16 text-gray-400">
-            <svg class="w-16 h-16 mx-auto mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
-            <p class="text-lg font-medium">No skills installed</p>
-            <p class="text-sm mt-1">Upload a skill zip package to get started</p>
+        <!-- Enabled Skills Grid -->
+        <div id="skills-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4"></div>
+
+        <!-- Disabled Skills -->
+        <section id="disabled-skills-section" class="hidden mt-8" aria-labelledby="disabled-skills-heading">
+            <button type="button" id="disabled-skills-toggle" onclick="toggleDisabledSkills()" class="ag-disabled-bar" aria-expanded="false" aria-controls="disabled-skills-grid">
+                <svg id="disabled-skills-chevron" class="ag-disabled-chev" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+                <span id="disabled-skills-heading" class="ag-disabled-label">Disabled Skills</span>
+                <span id="disabled-skills-count" class="ag-disabled-count"></span>
+            </button>
+            <div id="disabled-skills-grid" class="hidden mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4"></div>
+        </section>
+
+        <div id="empty-state" class="hidden ag-empty">
+            <span class="ag-empty-ic"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/></svg></span>
+            <p class="ag-empty-t">No skills installed</p>
+            <p class="ag-empty-s">Upload a skill zip package to get started</p>
+            <button type="button" onclick="document.getElementById('upload-modal').classList.remove('hidden')" class="ag-btn ag-btn-primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5"/><path d="M12 3v12"/></svg><span>Upload Skill</span></button>
         </div>
     </div>
 
-    <!-- Skillsets Tab -->
-    <div id="panel-skillsets" class="hidden">
-        <!-- Skillsets Grid -->
-        <div id="skillsets-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            <!-- Populated by JS -->
-        </div>
-
-        <div id="skillsets-empty" class="hidden text-center py-16 text-gray-400">
-            <svg class="w-16 h-16 mx-auto mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
-            <p class="text-lg font-medium">No skillsets available</p>
-            <p class="text-sm mt-1">Skillset templates help you create pre-configured agents quickly</p>
-        </div>
-    </div>
 </div>
 
 <!-- Upload Modal -->
 <div id="upload-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
     <div class="absolute inset-0 bg-black/50" onclick="closeUploadModal()"></div>
-    <div class="relative bg-white dark:bg-gray-800 rounded-xl w-[90%] max-w-[480px] shadow-xl">
+    <div class="relative ev-modal w-[90%] max-w-[480px]">
         <div class="p-6">
-            <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">Upload Skill Package</h3>
-            <div id="drop-zone"
-                 class="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-8 text-center cursor-pointer hover:border-indigo-400 hover:bg-indigo-50/50 dark:hover:bg-indigo-900/20 transition-colors"
-                 onclick="document.getElementById('file-input').click()">
-                <svg class="w-10 h-10 mx-auto mb-3 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
-                <p class="text-sm text-gray-600 dark:text-gray-300 font-medium">Click or drag & drop a .zip file</p>
-                <p id="file-name" class="text-xs text-gray-400 dark:text-gray-500 mt-2"></p>
+            <h3 class="ev-modal-t">Upload Skill Package</h3>
+            <p class="ev-modal-s">Install a skill from a .zip package.</p>
+            <div id="drop-zone" class="sk-drop" onclick="document.getElementById('file-input').click()">
+                <span class="ag-empty-ic" style="width:2.75rem;height:2.75rem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5"/><path d="M12 3v12"/></svg></span>
+                <p class="sk-drop-t">Click or drag &amp; drop a .zip file</p>
+                <p id="file-name" class="sk-drop-f"></p>
             </div>
             <input type="file" id="file-input" accept=".zip" class="hidden" onchange="onFileSelected(this)">
         </div>
-        <div class="flex gap-3 justify-end px-6 pb-5">
-            <button onclick="closeUploadModal()" class="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">Cancel</button>
-            <button id="upload-btn" onclick="uploadSkill()" disabled
-                    class="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-md text-sm font-medium transition-colors">
-                Install
-            </button>
+        <div class="ev-modal-btns px-6 pb-6">
+            <button onclick="closeUploadModal()" class="ev-btn">Cancel</button>
+            <button id="upload-btn" onclick="uploadSkill()" disabled class="ev-btn ev-btn-primary">Install</button>
         </div>
     </div>
 </div>
@@ -99,8 +78,37 @@ async function loadSkills() {
     renderSkills();
 }
 
+function skillCard(s, enabled) {
+    const id = esc(s.id);
+    const control = (enabled && s.protected)
+        ? '<span class="ag-chip is-muted" title="Core skill — required by the Explore agent and cannot be disabled">Core</span>'
+        : mkToggle({ checked: enabled ? !!s.enabled : false, onChange: `toggleSkill('${id}', this.checked)` });
+    const chips = [
+        s.lazy_tools ? '<span class="ag-chip">Lazy</span>' : '',
+        `<span class="ag-chip">${s.tool_count || 0} tool${(s.tool_count || 0) === 1 ? '' : 's'}</span>`,
+    ].join('');
+    return `
+        <div class="ag-card sk-card ${enabled ? '' : 'is-off'}" tabindex="0" role="link" onclick="window.location.href='/skills/${id}'"
+             onkeydown="if(event.key==='Enter'){window.location.href='/skills/${id}'}">
+            <div class="ag-card-top">
+                <span class="tp-ic"><i data-lucide="sparkles"></i></span>
+                <div class="ag-title">
+                    <div class="ag-name-row"><h3 class="ag-name">${esc(s.name || s.id)}</h3></div>
+                    <span class="ag-id">${id}</span>
+                </div>
+                <div class="sk-toggle" onclick="event.stopPropagation()" onkeydown="event.stopPropagation()">${control}</div>
+            </div>
+            <p class="ag-desc">${esc(s.description || 'No description')}</p>
+            <div class="tp-stats"><span>v${esc(s.version || '?')}</span><span>by ${esc(s.author || 'Unknown')}</span></div>
+            <div class="ag-badges">${chips}</div>
+        </div>`;
+}
+
 function renderSkills() {
     const grid = document.getElementById('skills-grid');
+    const disabledSection = document.getElementById('disabled-skills-section');
+    const disabledGrid = document.getElementById('disabled-skills-grid');
+    const disabledCount = document.getElementById('disabled-skills-count');
     const empty = document.getElementById('empty-state');
     const search = document.getElementById('skill-search').value.toLowerCase().trim();
     const skills = search
@@ -109,6 +117,8 @@ function renderSkills() {
 
     if (skills.length === 0) {
         grid.innerHTML = '';
+        disabledGrid.innerHTML = '';
+        disabledSection.classList.add('hidden');
         empty.classList.remove('hidden');
         empty.querySelector('p:first-of-type').textContent = search ? 'No skills found' : 'No skills installed';
         empty.querySelector('p:last-of-type').textContent = search ? 'Try a different search term.' : 'Upload a skill zip package to get started';
@@ -116,34 +126,31 @@ function renderSkills() {
     }
     empty.classList.add('hidden');
 
-    grid.innerHTML = skills.map(s => `
-        <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-100 dark:border-gray-700 hover:shadow-md transition-shadow overflow-hidden">
-            <div class="p-3">
-                <div class="flex items-start gap-2">
-                    <div class="flex-1 min-w-0 cursor-pointer" onclick="window.location.href='/skills/${s.id}'">
-                        <h3 class="font-semibold text-sm text-gray-800 dark:text-gray-100 truncate">${esc(s.name || s.id)}</h3>
-                        <p class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">ID: ${esc(s.id)} · v${esc(s.version || '?')} by ${esc(s.author || 'Unknown')}</p>
-                        <p class="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 mt-1">${esc(s.description || 'No description')}</p>
-                    </div>
-                    <div class="flex items-center gap-1 flex-shrink-0 mt-1">
-                        ${s.lazy_tools ? `<span class="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 bg-indigo-50 dark:text-indigo-400 dark:bg-indigo-900/30 px-2 py-1 rounded-full">
-                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                            Lazy
-                        </span>` : ''}
-                        <span class="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 bg-indigo-50 dark:text-indigo-400 dark:bg-indigo-900/30 px-2 py-1 rounded-full">
-                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
-                            ${s.tool_count || 0}
-                        </span>
-                        ${s.protected ? `<span class="inline-flex items-center gap-1 text-xs font-medium text-gray-500 bg-gray-100 dark:text-gray-400 dark:bg-gray-700 px-2 py-1 rounded-full" title="Core skill — required by the Explore agent and cannot be disabled or removed">
-                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
-                            Core
-                        </span>` : `
-                        ${mkToggle({ checked: !!s.enabled, onChange: `toggleSkill('${s.id}', this.checked)` })}`}
-                    </div>
-                </div>
-            </div>
-        </div>
-    `).join('');
+    const enabledSkills = [];
+    const disabledSkills = [];
+    skills.forEach(skill => {
+        if (skill.enabled !== false && skill.enabled !== 0) {
+            enabledSkills.push(skill);
+        } else {
+            disabledSkills.push(skill);
+        }
+    });
+
+    grid.innerHTML = enabledSkills.map(s => skillCard(s, true)).join('');
+    disabledGrid.innerHTML = disabledSkills.map(s => skillCard(s, false)).join('');
+    if (window.refreshLucideIcons) refreshLucideIcons();
+    disabledCount.textContent = disabledSkills.length;
+    disabledSection.classList.toggle('hidden', disabledSkills.length === 0);
+}
+
+function toggleDisabledSkills() {
+    const toggle = document.getElementById('disabled-skills-toggle');
+    const grid = document.getElementById('disabled-skills-grid');
+    const chevron = document.getElementById('disabled-skills-chevron');
+    const expanded = toggle.getAttribute('aria-expanded') === 'true';
+    toggle.setAttribute('aria-expanded', String(!expanded));
+    grid.classList.toggle('hidden', expanded);
+    chevron.style.transform = expanded ? '' : 'rotate(90deg)';
 }
 
 function filterSkills() {
@@ -220,11 +227,11 @@ const dropZone = document.getElementById('drop-zone');
 if (dropZone) {
     ['dragenter', 'dragover'].forEach(e => dropZone.addEventListener(e, ev => {
         ev.preventDefault();
-        dropZone.classList.add('border-indigo-400', 'bg-indigo-50/50');
+        dropZone.classList.add('is-over');
     }));
     ['dragleave', 'drop'].forEach(e => dropZone.addEventListener(e, ev => {
         ev.preventDefault();
-        dropZone.classList.remove('border-indigo-400', 'bg-indigo-50/50');
+        dropZone.classList.remove('is-over');
     }));
     dropZone.addEventListener('drop', ev => {
         const file = ev.dataTransfer.files[0];
@@ -234,117 +241,6 @@ if (dropZone) {
             document.getElementById('upload-btn').disabled = false;
         }
     });
-}
-
-// ==================== Tab Switching ====================
-
-function switchTab(tab) {
-    document.getElementById('panel-skills').classList.toggle('hidden', tab !== 'skills');
-    document.getElementById('panel-skillsets').classList.toggle('hidden', tab !== 'skillsets');
-    const tabSkills = document.getElementById('tab-skills');
-    const tabSkillsets = document.getElementById('tab-skillsets');
-    if (tab === 'skills') {
-        tabSkills.className = 'px-4 py-2 text-sm font-medium border-b-2 border-indigo-500 text-indigo-600 transition-colors';
-        tabSkillsets.className = 'px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 transition-colors';
-    } else {
-        tabSkillsets.className = 'px-4 py-2 text-sm font-medium border-b-2 border-indigo-500 text-indigo-600 transition-colors';
-        tabSkills.className = 'px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 transition-colors';
-        if (!window._skillsetsLoaded) {
-            loadSkillsets();
-            window._skillsetsLoaded = true;
-        }
-    }
-    location.hash = tab;
-}
-
-document.addEventListener('DOMContentLoaded', () => {
-    const hash = location.hash.replace('#', '');
-    if (hash === 'skillsets') switchTab('skillsets');
-});
-
-// ==================== Skillsets ====================
-
-async function loadSkillsets() {
-    try {
-        const res = await fetch('/api/skillsets');
-        const data = await res.json();
-        const skillsets = data.skillsets || [];
-        const grid = document.getElementById('skillsets-grid');
-        const empty = document.getElementById('skillsets-empty');
-
-        if (skillsets.length === 0) {
-            grid.innerHTML = '';
-            empty.classList.remove('hidden');
-            return;
-        }
-        empty.classList.add('hidden');
-
-        grid.innerHTML = skillsets.map(s => `
-            <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 hover:shadow-md transition-shadow overflow-hidden">
-                <div class="p-5">
-                    <div class="flex justify-between items-start mb-3">
-                        <div class="flex-1 min-w-0 cursor-pointer" onclick="window.location.href='/skillset/${esc(s.id)}'">
-                            <h3 class="font-semibold text-gray-800 dark:text-gray-100 truncate">${esc(s.name || s.id)}</h3>
-                            <p class="text-xs text-gray-400 mt-0.5">ID: ${esc(s.id)}</p>
-                        </div>
-                    </div>
-                    <p class="text-sm text-gray-500 line-clamp-2 mb-3 cursor-pointer" onclick="window.location.href='/skillset/${esc(s.id)}'">${esc(s.description || 'No description')}</p>
-                    <div class="flex justify-between items-center">
-                        <span class="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 bg-indigo-50 px-2 py-1 rounded-full">
-                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-                            ${s.tools_count || 0} tools
-                        </span>
-                        <button onclick="previewSkillset('${esc(s.id)}')"
-                                class="text-xs text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 px-2 py-1 rounded transition-colors">
-                            Preview
-                        </button>
-                    </div>
-                </div>
-            </div>
-        `).join('');
-    } catch (e) {
-        console.error('Failed to load skillsets:', e);
-    }
-}
-
-async function previewSkillset(skillId) {
-    try {
-        const res = await fetch(`/api/skillsets/${skillId}/resolve`);
-        const data = await res.json();
-        if (!res.ok) return;
-
-        const toolsHtml = (data.resolved_tools || []).map(t =>
-            `<span class="inline-block bg-gray-100 text-gray-700 text-xs px-2 py-1 rounded mr-1 mb-1">${esc(t)}</span>`
-        ).join('');
-        const unresolvedHtml = (data.unresolved_tools || []).map(t =>
-            `<span class="inline-block bg-red-50 text-red-600 text-xs px-2 py-1 rounded mr-1 mb-1">${esc(t)}</span>`
-        ).join('');
-
-        const promptPreview = (data.system_prompt || '').substring(0, 200) + (data.system_prompt && data.system_prompt.length > 200 ? '...' : '');
-
-        const modal = document.getElementById('skillset-preview-modal');
-        document.getElementById('preview-name').textContent = data.name || skillId;
-        document.getElementById('preview-desc').textContent = data.description || '';
-        document.getElementById('preview-prompt').textContent = promptPreview;
-        document.getElementById('preview-tools').innerHTML = toolsHtml || '<span class="text-gray-400 text-xs">No tools</span>';
-        document.getElementById('preview-unresolved').innerHTML = unresolvedHtml || '';
-        document.getElementById('preview-unresolved').parentElement.classList.toggle('hidden', !data.unresolved_tools || data.unresolved_tools.length === 0);
-        document.getElementById('preview-create-btn').onclick = function() {
-            closeSkillsetPreview();
-            window.location.href = `/agents?skillset=${skillId}`;
-        };
-        document.getElementById('preview-edit-btn').onclick = function() {
-            closeSkillsetPreview();
-            window.location.href = `/skillset/${skillId}`;
-        };
-        modal.classList.remove('hidden');
-    } catch (e) {
-        console.error('Failed to preview skillset:', e);
-    }
-}
-
-function closeSkillsetPreview() {
-    document.getElementById('skillset-preview-modal').classList.add('hidden');
 }
 
 function esc(s) {
@@ -357,37 +253,5 @@ function esc(s) {
 // before the fetch callback renders — a fast API response can otherwise beat it.
 document.addEventListener('DOMContentLoaded', loadSkills);
 </script>
-
-<!-- Skillset Preview Modal -->
-<div id="skillset-preview-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
-    <div class="absolute inset-0 bg-black/50" onclick="closeSkillsetPreview()"></div>
-    <div class="relative bg-white dark:bg-gray-800 rounded-xl w-[90%] max-w-[560px] shadow-xl max-h-[80vh] overflow-y-auto">
-        <div class="p-6">
-            <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-1" id="preview-name"></h3>
-            <p class="text-sm text-gray-500 mb-4" id="preview-desc"></p>
-
-            <div class="mb-4">
-                <label class="block mb-1 text-xs font-medium text-gray-500 uppercase">System Prompt</label>
-                <div class="bg-gray-50 dark:bg-gray-900 rounded-md p-3 text-sm text-gray-700 dark:text-gray-300 font-mono whitespace-pre-wrap max-h-32 overflow-y-auto" id="preview-prompt"></div>
-            </div>
-
-            <div class="mb-4">
-                <label class="block mb-1 text-xs font-medium text-gray-500 uppercase">Tools</label>
-                <div id="preview-tools"></div>
-            </div>
-
-            <div class="mb-4 hidden">
-                <label class="block mb-1 text-xs font-medium text-red-500 uppercase">Unresolved Tools</label>
-                <div id="preview-unresolved"></div>
-            </div>
-
-        </div>
-        <div class="flex gap-3 justify-end px-6 pb-5">
-            <button onclick="closeSkillsetPreview()" class="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">Close</button>
-            <button id="preview-edit-btn" class="px-4 py-2 border border-indigo-500 text-indigo-600 hover:bg-indigo-50 rounded-md text-sm font-medium transition-colors">Edit</button>
-            <button id="preview-create-btn" class="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded-md text-sm font-medium transition-colors">Create Agent from this</button>
-        </div>
-    </div>
-</div>
 
 {% endblock %}

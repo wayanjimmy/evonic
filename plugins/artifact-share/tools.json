@@ -1,0 +1,23 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "share_artifact",
+      "description": "Share one of your own binary artifacts with another agent on this platform. The platform picks the shortest safe transport automatically: when both you and the recipient run directly on the same Evonic host it returns a host-local absolute path (\"transport\":\"local_path\"); in every other case (sandbox, bwrap, remote, tunnel, or unknown) it returns a short-lived, single-use tokenized HTTPS download URL (\"transport\":\"token_url\") plus the file's size and SHA-256. The recipient copies the file into its own workspace and MUST verify the SHA-256 before use. Never paste binary content or base64 data into a message \u2014 use this tool instead. On a local_path result: copy the file into your configured workspace immediately, verify the SHA-256, and never forward the path to a third party. On a token_url result: download the URL once (it is single-use and expires in ~5 minutes) and verify the SHA-256.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "filename": {
+            "type": "string",
+            "description": "The exact name of the artifact file to share, as it appears in your artifact directory (a plain basename such as \"report.pdf\" \u2014 no directory separators)."
+          },
+          "recipient_agent_id": {
+            "type": "string",
+            "description": "The ID of the recipient agent (lowercase snake_case), e.g. \"linus\"."
+          }
+        },
+        "required": ["filename", "recipient_agent_id"]
+      }
+    }
+  }
+]

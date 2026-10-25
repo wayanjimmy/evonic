@@ -84,6 +84,7 @@ class TurnPrefetcher:
             from models.db import db
             from models.chatlog import chatlog_manager
             from backend.agent_runtime import context as _ctx
+            from backend.agent_runtime import simulation_spec as sim_spec
             from backend.channels.registry import channel_manager
 
             # Rebuild system prompt (may have changed since last turn)
@@ -93,12 +94,13 @@ class TurnPrefetcher:
             fresh_tools = _ctx.build_tools(agent)
 
             # Rebuild agent context. Explorers use their own configured tool
-            # set; everyone else inherits from the DB.
+            # set; everyone else resolves through sim_spec so this allowlist
+            # matches what build_tools() exposed to the model.
             if agent.get('is_explorer'):
                 from backend.agent_runtime import explorer as _explorer
                 assigned_tool_ids = list(_explorer.tool_ids(agent))
             else:
-                assigned_tool_ids = db.get_agent_tools(db_agent_id)
+                assigned_tool_ids = list(sim_spec.tools(agent, db_agent_id))
 
             # Inter-agent communication is enabled by the agent-level toggle;
             # send_agent_message is therefore available without a separate tool
@@ -195,6 +197,7 @@ class TurnPrefetcher:
                 'messaging_acl_mode': agent.get('messaging_acl_mode', 'whitelist'),
                 'enable_atg': bool(agent.get('enable_atg')) and bool(agent.get('enable_agent_state')),
                 'enable_cmp': bool(agent.get('enable_cmp')) and bool(agent.get('enable_agent_state')),
+                'workplace_switch_enabled': bool(agent.get('workplace_switch_enabled')),
             }
 
             # Re-load messages from JSONL (most expensive I/O, ~10-200ms)
@@ -311,14 +314,13 @@ class TurnPrefetcher:
                     if chan_instr:
                         fresh_messages.insert(1, {"role": "system", "content": chan_instr})
 
-            # Inject channel user identity (authoritative name for this session).
-            # Skip if already present in the message list (from JSONL history) to
-            # avoid duplicates when rebuilding from scratch.
+            # Inject trusted channel sender identity.  Skip if already present in
+            # the message list (from JSONL history) to avoid duplicate blocks.
             _already_injected = any(
                 "## Current User" in (m.get("content") or "")
                 for m in fresh_messages[:6]
             )
-            if ctx.channel_id and not ctx.external_user_id.startswith("__agent__") and not _already_injected:
+            if not _already_injected:
                 user_id_ctx = _ctx.build_user_identity_context(
                     ctx.channel_id, ctx.external_user_id,
                 )

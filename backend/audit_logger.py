@@ -259,5 +259,49 @@ class AuditLogger:
         )
 
 
+    # -- Artifact sharing ------------------------------------------------
+
+    @staticmethod
+    def log_artifact_share(
+        sender_agent_id: str = "",
+        owner_agent_id: str = "",
+        recipient_agent_id: str = "",
+        transport: str = "",
+        reason: str = "",
+        filename: str = "",
+        size_bytes: int = 0,
+        sha256: str = "",
+        result: str = "success",
+        extra: dict = None,
+    ) -> None:
+        """Record a cross-agent artifact share.
+
+        The raw download token and URL are deliberately never recorded.  The
+        acting *sender* is preserved separately from the artifact *owner*:
+        for a sub-agent the owner is its parent (where the artifact registry
+        actually lives), so both identities remain auditable.
+        """
+        detail = {
+            "sender_agent_id": sender_agent_id,
+            "owner_agent_id": owner_agent_id,
+            "recipient_agent_id": recipient_agent_id,
+            "transport": transport,
+            "reason": reason,
+            "filename": filename,
+            "size_bytes": size_bytes,
+            "sha256": sha256,
+        }
+        if extra:
+            detail.update(extra)
+        AuditLogger._emit(
+            event_type="artifact_share",
+            user_id=sender_agent_id,
+            resource=f"agent/{owner_agent_id}",
+            action="share_artifact",
+            result=result,
+            detail=json.dumps(detail, default=str),
+        )
+
+
 # Module-level singleton for convenient imports
 audit = AuditLogger()

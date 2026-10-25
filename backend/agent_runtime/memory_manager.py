@@ -2095,6 +2095,17 @@ def store_memory(agent_id: str, session_id: str, content: str,
         if new_summary is None:
             new_summary = (existing_summary.rstrip() + "\n" + bullet
                            if existing_summary else bullet)
+
+        # Keep the running session summary within the hard character cap. This
+        # path runs inside a tool call and has no LLM client handy, so use the
+        # deterministic line-level pruner only -- cheap and non-blocking.
+        try:
+            from backend.agent_runtime.summary_compactor import compact_summary
+            new_summary = compact_summary(new_summary, use_llm=False)
+        except Exception as _cap_err:  # pragma: no cover - defensive
+            logging.getLogger(__name__).debug(
+                "summary cap skipped in remember path: %s", _cap_err)
+
         if rec and rec.get('summary'):
             db.upsert_summary(session_id, new_summary,
                               rec.get('last_message_id') or 0,

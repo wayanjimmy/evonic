@@ -263,6 +263,60 @@ class Scheduler:
 
         return db.get_schedule(schedule_id)
 
+    def update_schedule(self, schedule_id: str, name: str = None,
+                        trigger_type: str = None, trigger_config: dict = None,
+                        action_type: str = None, action_config: dict = None,
+                        max_runs: int = None, clear_max_runs: bool = False) -> Optional[dict]:
+        """Update an existing schedule and re-register its APScheduler job."""
+        from models.db import db
+        schedule = db.get_schedule(schedule_id)
+        if not schedule:
+            return None
+
+        updates = {}
+        if name is not None:
+            updates['name'] = name
+        if trigger_type is not None:
+            updates['trigger_type'] = trigger_type
+        if trigger_config is not None:
+            updates['trigger_config'] = trigger_config
+        if action_type is not None:
+            updates['action_type'] = action_type
+        if action_config is not None:
+            updates['action_config'] = action_config
+
+        new_trigger_type = updates.get('trigger_type', schedule['trigger_type'])
+        new_trigger_config = updates.get('trigger_config', schedule['trigger_config'])
+
+        if clear_max_runs:
+            # One-shot date schedules are always single-run; otherwise clear to unlimited.
+            updates['max_runs'] = 1 if new_trigger_type == 'date' else None
+        elif max_runs is not None:
+            updates['max_runs'] = max_runs
+        # For one-shot date triggers, enforce max_runs=1 (mirrors create_schedule)
+        elif new_trigger_type == 'date' and not schedule.get('max_runs'):
+            updates['max_runs'] = 1
+
+        # Validate the trigger before persisting anything.
+        if 'trigger_type' in updates or 'trigger_config' in updates:
+            try:
+                self._build_trigger(new_trigger_type, dict(new_trigger_config))
+            except Exception as e:
+                raise ValueError(f"Invalid trigger: {e}") from e
+
+        db.update_schedule(schedule_id, **updates)
+
+        if schedule['enabled']:
+            self._register_job(schedule_id, new_trigger_type, new_trigger_config)
+            self._update_next_run(schedule_id)
+
+        updated = self._enrich_next_run(db.get_schedule(schedule_id))
+        self._emit('schedule_updated', {
+            'schedule_id': schedule_id, 'name': updated['name'],
+            'owner_type': updated['owner_type'], 'owner_id': updated['owner_id'],
+        })
+        return updated
+
     def cancel_schedule(self, schedule_id: str, owner_id: str = None) -> bool:
         """Cancel and delete a schedule. If owner_id is given, enforce ownership."""
         from models.db import db
@@ -759,8 +813,21 @@ class Scheduler:
         if external_user_id != '__scheduler__' and channel_id:
             session_id = main_db.get_or_create_session(
                 agent_id, external_user_id, channel_id)
-            main_db.add_chat_message(
+            message_id = main_db.add_chat_message(
                 session_id, 'assistant', message, agent_id=agent_id)
+            message_id = message_id if type(message_id) in (int, str) else None
+            from models.chatlog import chatlog_manager
+            chatlog_manager.get(agent_id, session_id).append({
+                'type': 'final', 'session_id': session_id,
+                'content': message, 'message_id': message_id,
+            })
+            from backend.event_stream import event_stream
+            event_stream.emit('message_received', {
+                'agent_id': agent_id, 'session_id': session_id,
+                'external_user_id': external_user_id, 'channel_id': channel_id,
+                'message': message, 'message_id': message_id,
+                'role': 'assistant', 'sender': 'scheduler',
+            })
 
             # Push via channel (Telegram, etc.) so the user sees it immediately.
             # Only return on successful delivery — if the channel is down or

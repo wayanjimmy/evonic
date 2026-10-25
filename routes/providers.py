@@ -3,6 +3,8 @@ from typing import Any, Dict
 import requests
 from flask import Blueprint, jsonify, request
 
+from backend.tools.lib.model_route_adapters import DEFAULT_ROUTE_ADAPTER_REGISTRY
+from backend.tools.lib.model_routing_contracts import AdapterKey, validate_endpoint
 from models.db import db
 
 providers_bp = Blueprint("providers", __name__)
@@ -11,9 +13,24 @@ _SENSITIVE_KEYS = frozenset({"api_key", "refresh_token"})
 
 
 def _sanitize(provider: Dict[str, Any]) -> Dict[str, Any]:
+    if provider.get("api_format") == "claude_cli":
+        from backend.provider.claude_cli import get_status
+        provider["credential_configured"] = get_status()["logged_in"]
+    else:
+        provider["credential_configured"] = bool(provider.get("api_key"))
     for key in _SENSITIVE_KEYS:
         provider.pop(key, None)
     return provider
+
+
+def _provider_adapter(provider: Dict[str, Any]):
+    """Resolve a provider diagnostic through the versioned adapter registry."""
+    try:
+        adapter = DEFAULT_ROUTE_ADAPTER_REGISTRY.get(AdapterKey(provider["adapter_key"]))
+        endpoint = validate_endpoint(provider.get("endpoint") or provider.get("base_url", ""))
+    except (KeyError, ValueError):
+        return None, None
+    return adapter, endpoint
 
 
 @providers_bp.route("/api/providers", methods=["GET"])
@@ -46,8 +63,10 @@ def api_create_provider():
 
     try:
         new_id = db.create_provider(data)
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+    except Exception:
+        return jsonify({"success": False, "error": "Unable to create provider"}), 500
 
     return jsonify({"success": True, "provider_id": new_id})
 
@@ -65,7 +84,10 @@ def api_update_provider(provider_id):
     if "api_key" in data and not data["api_key"]:
         del data["api_key"]
 
-    success = db.update_provider(provider_id, data)
+    try:
+        success = db.update_provider(provider_id, data)
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 400
     if not success:
         return jsonify({"success": False, "error": "No changes made"}), 400
 
@@ -78,6 +100,16 @@ def api_delete_provider(provider_id):
     if not provider:
         return jsonify({"success": False, "error": "Provider not found"}), 404
 
+    if request.args.get("cascade") in ("1", "true"):
+        try:
+            removed = db.delete_provider_cascade(provider_id)
+        except ValueError:
+            return jsonify({
+                "success": False,
+                "error": "One of its models is the global default. Set another model as default first.",
+            }), 409
+        return jsonify({"success": True, "models_removed": removed})
+
     success = db.delete_provider(provider_id)
     if not success:
         return jsonify(
@@ -87,6 +119,14 @@ def api_delete_provider(provider_id):
     return jsonify({"success": True})
 
 
+@providers_bp.route("/api/providers/<provider_id>/delete-impact", methods=["GET"])
+def api_provider_delete_impact(provider_id):
+    """Preview for the delete dialog: its models, the agents using them, and any default."""
+    if not db.get_provider(provider_id):
+        return jsonify({"success": False, "error": "Provider not found"}), 404
+    return jsonify({"success": True, **db.get_provider_delete_impact(provider_id)})
+
+
 @providers_bp.route("/api/providers/<provider_id>/fetch-models", methods=["POST"])
 def api_fetch_provider_models(provider_id):
     """Fetch available models from a provider's API endpoint."""
@@ -94,17 +134,22 @@ def api_fetch_provider_models(provider_id):
     if not provider:
         return jsonify({"error": "Provider not found"}), 404
 
-    base_url = provider.get("base_url", "").rstrip("/")
-    if not base_url:
-        return jsonify({"success": False, "error": "Provider has no base_url configured"}), 400
+    if provider.get("api_format") == "claude_cli":
+        from backend.provider.claude_cli import KNOWN_MODELS, get_status
+        if not get_status()["logged_in"]:
+            return jsonify({"success": False, "error": "Not connected. Run `claude auth login` first."}), 401
+        existing = {m["model_name"] for m in db.get_models_by_provider(provider_id)}
+        models = [dict(m, already_added=m["id"] in existing) for m in KNOWN_MODELS]
+        return jsonify({"success": True, "models": models, "total": len(models)})
 
-    api_format = provider.get("api_format", "openai")
-    if api_format == "ollama":
-        models_url = f"{base_url}/tags"
-    elif api_format == "codex":
-        models_url = f"{base_url}/models"
-    else:
-        models_url = f"{base_url}/models"
+    adapter, base_url = _provider_adapter(provider)
+    if adapter is None or not base_url:
+        return jsonify({"success": False, "error": "Provider has an invalid endpoint or adapter configuration"}), 400
+
+    # Discovery is deliberately prompt-free. The adapter key, not hostname or
+    # locality metadata, determines its protocol-specific probe path.
+    models_url = f"{base_url}{adapter.discovery_path()}"
+    api_format = provider.get("api_format", "openai")  # legacy auth bridge only
 
     headers = {"Content-Type": "application/json"}
     if api_format == "codex":
@@ -113,6 +158,12 @@ def api_fetch_provider_models(provider_id):
         if not token:
             return jsonify({"success": False, "error": "Not connected. Click Connect first."}), 401
         headers["Authorization"] = f"Bearer {token}"
+    elif api_format == "anthropic":
+        from backend.provider.claude_code import auth_headers, resolve_api_key
+        token = resolve_api_key(db, provider_id)
+        if not token:
+            return jsonify({"success": False, "error": "Not connected. Set up credentials first."}), 401
+        headers = auth_headers(token)
     else:
         api_key = provider.get("api_key")
         if api_key:
@@ -144,31 +195,7 @@ def api_fetch_provider_models(provider_id):
             })
 
         data = resp.json()
-        if api_format == "ollama":
-            raw_models = data.get("models", [])
-            models = [{"id": m.get("name", ""), "name": m.get("name", "")} for m in raw_models]
-        elif api_format == "codex":
-            raw_models = data.get("models", data.get("data", []))
-            if isinstance(raw_models, list) and raw_models:
-                models = []
-                for m in raw_models:
-                    if isinstance(m, str):
-                        models.append({"id": m, "name": m})
-                    elif isinstance(m, dict):
-                        mid = m.get("id") or m.get("slug") or m.get("model") or m.get("name", "")
-                        models.append({"id": mid, "name": mid})
-            else:
-                models = [
-                    {"id": "gpt-5.6-sol", "name": "GPT-5.6 Sol"},
-                    {"id": "gpt-5.6-terra", "name": "GPT-5.6 Terra"},
-                    {"id": "gpt-5.6-luna", "name": "GPT-5.6 Luna"},
-                ]
-        else:
-            raw_models = data.get("data", data.get("models", []))
-            if isinstance(raw_models, list):
-                models = [{"id": m.get("id", ""), "name": m.get("id", "")} for m in raw_models]
-            else:
-                models = []
+        models = adapter.parse_discovered_models(data if isinstance(data, dict) else {})
 
         # Mark which ones are already added
         existing = {m["model_name"] for m in db.get_models_by_provider(provider_id)}
@@ -192,15 +219,20 @@ def api_test_provider(provider_id):
     if not provider:
         return jsonify({"error": "Provider not found"}), 404
 
-    base_url = provider.get("base_url", "").rstrip("/")
-    if not base_url:
-        return jsonify({"success": False, "error": "Provider has no base_url configured"}), 400
+    if provider.get("api_format") == "claude_cli":
+        from backend.provider.claude_cli import get_status
+        status = get_status(force=True)
+        if status["logged_in"]:
+            return jsonify({"success": True, "message": f"Claude Code CLI {status['version']} ready"})
+        return jsonify({"success": False, "error": status["error"]})
 
-    api_format = provider.get("api_format", "openai")
-    if api_format == "ollama":
-        url = f"{base_url}/tags"
-    else:
-        url = f"{base_url}/models"
+    adapter, base_url = _provider_adapter(provider)
+    if adapter is None or not base_url:
+        return jsonify({"success": False, "error": "Provider has an invalid endpoint or adapter configuration"}), 400
+
+    # This is a synthetic discovery probe; it never submits a production prompt.
+    url = f"{base_url}{adapter.discovery_path()}"
+    api_format = provider.get("api_format", "openai")  # legacy auth bridge only
 
     headers = {}
     if api_format == "codex":
@@ -209,6 +241,12 @@ def api_test_provider(provider_id):
         if not token:
             return jsonify({"success": False, "error": "Not connected. Click Connect first."}), 401
         headers["Authorization"] = f"Bearer {token}"
+    elif api_format == "anthropic":
+        from backend.provider.claude_code import auth_headers, resolve_api_key
+        token = resolve_api_key(db, provider_id)
+        if not token:
+            return jsonify({"success": False, "error": "Not connected. Set up credentials first."}), 401
+        headers = auth_headers(token)
     else:
         api_key = provider.get("api_key")
         if api_key:
@@ -235,11 +273,7 @@ def api_test_provider(provider_id):
         if resp.status_code == 200:
             try:
                 data = resp.json()
-                if api_format == "ollama":
-                    models = data.get("models", [])
-                else:
-                    models = data.get("data", data.get("models", []))
-                count = len(models) if isinstance(models, list) else "?"
+                count = len(adapter.parse_discovered_models(data if isinstance(data, dict) else {}))
             except Exception:
                 count = "?"
             return jsonify({"success": True, "message": f"Connected ({count} models available)"})
@@ -285,6 +319,8 @@ def api_add_model_from_provider(provider_id):
         "enabled": 1,
         "api_format": provider.get("api_format", "openai"),
     }
+    if provider.get("api_format") in ("claude_cli", "anthropic"):
+        model_data["vision_supported"] = 1
 
     try:
         new_id = db.create_model(model_data)

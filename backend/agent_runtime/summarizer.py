@@ -13,6 +13,10 @@ from typing import Dict, Any
 from models.db import db
 from backend.llm_client import llm_client, strip_thinking_tags
 from config import AGENT_MAX_SUMMARIZE_BATCH as MAX_SUMMARIZE_BATCH
+from backend.agent_runtime.summary_compactor import (
+    compact_summary,
+    MAX_SUMMARY_CHARS,
+)
 
 _BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _LOGS_DIR = os.path.join(_BASE_DIR, 'logs')
@@ -59,7 +63,7 @@ Rules:
 - Use bullet points for clarity
 - If there is an existing summary, merge then create new compact summary
 - Ignore the tools, focus to the agent response and user decision.
-- Keep the summary concise but complete — no information loss.
+- Keep the summary concise; merge duplicate points and drop details that are no longer relevant to the current session.
 - You **MUST KEEP** the user information that already provided or known like phone number, full name, contact person if any.
 
 ## Summary Example:
@@ -110,6 +114,26 @@ Format example:
 If the user mentioned no named entities at all, write:
 ## Entities & Relationships
 - (none)"""
+
+
+# Appended to every summarizer prompt (custom or default). Enforces the hard
+# character cap on the persisted summary. Semantic compaction runs afterwards as
+# a guarantee, but stating the budget up front keeps the model from overshooting
+# and makes the drop policy explicit: compress wording, drop session-irrelevant
+# details, but never remove user identity/contact or the entities section.
+_LENGTH_CAP_CLAUSE = f"""
+
+============================================================
+HARD SIZE LIMIT — this overrides any conflicting instruction above.
+The summary, INCLUDING the "## Entities & Relationships" section, MUST NOT
+exceed {MAX_SUMMARY_CHARS} characters. Stay comfortably under the limit:
+- Merge duplicate points and compress wording into terse fragments.
+- Drop details that are no longer relevant to the current session (resolved
+  issues, superseded plans, stale small talk, intermediate steps).
+- Never drop user identity/contact details or the entities section; when space
+  is tight, shorten those entries instead of removing them.
+When in doubt, prefer the MOST RECENT request, decision, and outcome.
+"""
 
 
 def maybe_summarize(agent: dict, session_id: str,
@@ -267,7 +291,7 @@ def _do_summarize_jsonl(agent: dict, session_id: str, llm_lock: threading.Lock,
             print(f"[AgentRuntime] Summarize skipped: no new entries to summarize between existing summary and new cut point")
             return False
 
-    prompt_template = (agent.get('summarize_prompt') or DEFAULT_SUMMARIZE_PROMPT) + _ENTITY_PRESERVATION_CLAUSE
+    prompt_template = (agent.get('summarize_prompt') or DEFAULT_SUMMARIZE_PROMPT) + _ENTITY_PRESERVATION_CLAUSE + _LENGTH_CAP_CLAUSE
 
     chunks = [entries_to_summarize[i:i + MAX_SUMMARIZE_BATCH]
               for i in range(0, len(entries_to_summarize), MAX_SUMMARIZE_BATCH)]
@@ -317,6 +341,15 @@ def _do_summarize_jsonl(agent: dict, session_id: str, llm_lock: threading.Lock,
 
     if current_summary and summarized_up_to_ts > ((summary_record.get('last_message_ts') or 0) if summary_record else 0):
         print(f"[AgentRuntime] Summarize OK: {summarized_count} message(s) covered, last_message_ts={summarized_up_to_ts}")
+        # Hard-cap the persisted summary via semantic compaction (never naive
+        # mid-text truncation). Recent turns seed the relevance focus so stale
+        # details are dropped first. No-op when already within budget.
+        current_summary = compact_summary(
+            current_summary,
+            max_chars=MAX_SUMMARY_CHARS,
+            llm_lock=llm_lock,
+            focus_text=_format_entries_for_summary(all_entries[cut_index:])[:1500] or None,
+        )
         db.upsert_summary(session_id, current_summary, 0,
                           summarized_count, agent_id=agent_id,
                           last_message_ts=summarized_up_to_ts)
@@ -400,7 +433,7 @@ def _do_summarize_sqlite(agent: dict, session_id: str, llm_lock: threading.Lock,
         print(f"[AgentRuntime] Summarize skipped (sqlite): no new messages to summarize")
         return False
 
-    prompt_template = (agent.get('summarize_prompt') or DEFAULT_SUMMARIZE_PROMPT) + _ENTITY_PRESERVATION_CLAUSE
+    prompt_template = (agent.get('summarize_prompt') or DEFAULT_SUMMARIZE_PROMPT) + _ENTITY_PRESERVATION_CLAUSE + _LENGTH_CAP_CLAUSE
 
     chunks = [msgs_to_summarize[i:i + MAX_SUMMARIZE_BATCH]
               for i in range(0, len(msgs_to_summarize), MAX_SUMMARIZE_BATCH)]
@@ -450,6 +483,14 @@ def _do_summarize_sqlite(agent: dict, session_id: str, llm_lock: threading.Lock,
 
     if current_summary and summarized_up_to > (summary_record['last_message_id'] if summary_record else 0):
         print(f"[AgentRuntime] Summarize OK (sqlite): {summarized_count} message(s) covered, last_message_id={summarized_up_to}")
+        # Hard-cap the persisted summary (semantic compaction, no mid-text
+        # truncation). No-op when already within budget.
+        current_summary = compact_summary(
+            current_summary,
+            max_chars=MAX_SUMMARY_CHARS,
+            llm_lock=llm_lock,
+            focus_text=_format_messages_for_summary(all_messages[cut_index:])[:1500] or None,
+        )
         db.upsert_summary(session_id, current_summary, summarized_up_to,
                           summarized_count, agent_id=agent_id)
 

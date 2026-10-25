@@ -1,9 +1,8 @@
 # Evonic
 
-> **Design. Deploy. Orchestrate.**  
-> *Your Models. Your Rules. Your Swarm.*
+> Agentic Infrastructure for Organization: Transform your organization with agentic AI, making every workflow faster, smarter, and sharper at scale.
 
-Evonic is an **agentic AI framework** for designing, building, and orchestrating intelligent agents from concept to production. It empowers you to define every aspect of an agent — its **model**, **tools**, **knowledge base**, **channels**, and **skills** — and compose them into multi-agent systems that operate autonomously across distributed environments.
+Evonic is an **agentic AI framework** for designing, building, and orchestrating intelligent agents from concept to production for your business or organization. It empowers you to define every aspect of an agent, its **model**, **tools**, **knowledge**, **channels**, **workplace**, and **skills**, and compose them into multi-agent systems that operate autonomously across distributed environments.
 
 **Full documentation:** [evonic.dev](https://evonic.dev)
 
@@ -21,13 +20,13 @@ Evonic is an **agentic AI framework** for designing, building, and orchestrating
 
 Evonic is not just another agent framework. Three architectural decisions set it apart:
 
-### 1. Workplace — Anywhere Execution
+### 1. Workplace - Anywhere Execution
 
 Agents are not tied to a single machine. A **Workplace** is a first-class execution environment that can be:
 
-- **Local** — sandboxed workspace on the host machine
-- **Remote** — SSH servers, edge devices, or any machine with network access
-- **Tunnel** — lightweight Evonet connector that requires no public IP, no SSH, and no firewall rules
+- **Local** - sandboxed workspace on the host machine
+- **Remote** - SSH servers, edge devices, or any machine with network access
+- **Tunnel** - lightweight Evonet connector that requires no public IP, no SSH, and no firewall rules
 
 This means your agents can operate across your entire infrastructure — development laptops, production servers, and cloud instances — with a single abstraction layer.
 
@@ -230,6 +229,15 @@ Plugins are event-driven extensions that hook into Evonic's event stream. Manage
 ./evonic plugin list
 ./evonic plugin uninstall my_plugin
 ```
+
+### Cross-Agent Artifact Sharing
+
+The bundled **Artifact Share** plugin lets agents hand binary artifacts to one
+another safely. A share is delivered either as a direct host-local filesystem
+path (only when both agents run on the same Evonic host) or as a short-lived,
+single-use tokenized download URL; messages never carry binary data. See
+[`docs/artifact-sharing.md`](docs/artifact-sharing.md) for the decision matrix
+and the recipient download/copy procedures.
 
 ---
 

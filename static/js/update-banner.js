@@ -17,10 +17,10 @@
     // -- Banner styling per state ----------------------------------------
 
     var STYLES = {
-        available: 'border-t border-indigo-200 dark:border-indigo-800 bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300',
-        updating:  'border-t border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950 text-amber-700 dark:text-amber-300',
-        success:   'border-t border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-950 text-green-700 dark:text-green-300',
-        failed:    'border-t border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950 text-red-700 dark:text-red-300',
+        available: 'ev-banner ev-banner-info',
+        updating:  'ev-banner ev-banner-warn',
+        success:   'ev-banner ev-banner-ok',
+        failed:    'ev-banner ev-banner-danger',
     };
 
     function updateHeaderHeight() {

@@ -4,20 +4,13 @@
    (same .dyn-toggle pattern as partials/toggle.html) so they can carry
    data attributes. #}
 
-<div class="settings-pane-head">
-    <h2 class="settings-pane-title">General</h2>
-    <p class="settings-pane-desc">
-        Core behavior, model routing, and reliability tuning. Changes save
-        automatically.
-    </p>
-</div>
-
 <!-- ================= Appearance ================= -->
-<section class="setting-group" id="group-appearance">
+<section class="setting-group subpage" id="group-appearance" data-page="general-appearance">
     <div class="setting-group-head">
         <i data-lucide="palette"></i>
         <h3>Appearance</h3>
     </div>
+    <p class="setting-group-desc">Theme mode and color presets.</p>
     <div class="setting-group-body">
         <div class="setting-row" data-search="theme light dark system appearance color scheme">
             <div class="setting-row-text">
@@ -42,29 +35,34 @@
                 <span class="save-status" aria-live="polite"></span>
             </div>
         </div>
-        <div class="setting-row" data-search="agent sidebar limit maximum agents shown list">
+        <div class="setting-row stacked" data-search="color theme preset dracula nord solarized monokai github one dark tokyo night catppuccin gruvbox light dark vscode">
             <div class="setting-row-text">
-                <div class="setting-row-title">Agent Sidebar Limit</div>
+                <div class="setting-row-title">Color theme</div>
                 <div class="setting-row-desc">
-                    Maximum number of agents shown in the sidebar. Range: 1&ndash;500.
+                    Pick a preset for each scheme. The dark preset is used in dark mode, the light preset in light mode.
                 </div>
             </div>
-            <div class="setting-row-control">
-                <input type="number" id="agent-sidebar-limit-input" class="setting-num"
-                       min="1" max="500"
-                       data-setting-key="agent_sidebar_limit" data-setting-type="int" />
-                <span class="save-status" aria-live="polite"></span>
+            <div class="theme-groups">
+                <div class="theme-group">
+                    <div class="theme-group-label"><i data-lucide="moon"></i>Dark themes</div>
+                    <div class="theme-grid" id="theme-presets-dark" role="radiogroup" aria-label="Dark color theme"></div>
+                </div>
+                <div class="theme-group">
+                    <div class="theme-group-label"><i data-lucide="sun"></i>Light themes</div>
+                    <div class="theme-grid" id="theme-presets-light" role="radiogroup" aria-label="Light color theme"></div>
+                </div>
             </div>
         </div>
     </div>
 </section>
 
 <!-- ================= Models & Routing ================= -->
-<section class="setting-group" id="group-models-routing">
+<section class="setting-group subpage" id="group-models-routing" data-page="general-models-routing">
     <div class="setting-group-head">
         <i data-lucide="route"></i>
         <h3>Models &amp; Routing</h3>
     </div>
+    <p class="setting-group-desc">Default, fallback and vision models, and how tasks are routed.</p>
     <div class="setting-group-body">
         <div class="setting-row stacked" data-search="default llm model global agents evaluations">
             <div class="setting-row-text">
@@ -97,7 +95,8 @@
         <section class="setting-subgroup vision-models-group" aria-label="Vision Models">
             <div class="setting-subgroup-head">
                 <i data-lucide="eye" aria-hidden="true"></i>
-                <p>Configure the primary model and fallback order for image descriptions.</p>
+                <h4>Vision models</h4>
+                <p>Primary model and fallback order used to describe images.</p>
             </div>
             <div class="setting-subgroup-body">
                 <div class="setting-row stacked" data-search="vision primary fallback describe image analysis multimodal">
@@ -196,11 +195,41 @@
                 <span class="save-status" aria-live="polite"></span>
             </div>
         </div>
-        <div class="setting-row stacked" data-search="task classifier model select classification">
+        <div class="setting-row stacked" data-search="task classifier decision model trivial complex planning profile">
             <div class="setting-row-text">
-                <div class="setting-row-title">Task Classifier Model</div>
+                <div class="setting-row-title">Task Classifier Decision Model</div>
                 <div class="setting-row-desc">
-                    Model used for task classification. Small, fast models work well.
+                    Use a structured Decision Model to classify tasks as trivial or complex.
+                    Choose a compatible model to enable it; clear the selection to use the legacy classifier.
+                </div>
+            </div>
+            <div class="setting-row-control">
+                <select id="task-classifier-decision-model-select" class="setting-select">
+                    <option value="">Loading compatible models…</option>
+                </select>
+                <span class="save-status" aria-live="polite"></span>
+            </div>
+        </div>
+        <div class="setting-row stacked" data-search="cmp path detection decision model context memory boundary profile">
+            <div class="setting-row-text">
+                <div class="setting-row-title">Path Detection Decision Model (CMP)</div>
+                <div class="setting-row-desc">
+                    Use a structured Decision Model to confirm whether a request belongs to the current task path.
+                    Choose a compatible model to enable it; clear the selection to use the legacy CMP classifier.
+                </div>
+            </div>
+            <div class="setting-row-control">
+                <select id="cmp-decision-model-select" class="setting-select">
+                    <option value="">Loading compatible models…</option>
+                </select>
+                <span class="save-status" aria-live="polite"></span>
+            </div>
+        </div>
+        <div class="setting-row stacked" data-search="task classifier legacy model select classification fallback">
+            <div class="setting-row-text">
+                <div class="setting-row-title">Task Classifier Legacy Model</div>
+                <div class="setting-row-desc">
+                    Fallback model used when the Task Classifier Decision Model is not configured or cannot return a valid result.
                 </div>
             </div>
             <div class="setting-row-control">
@@ -211,14 +240,11 @@
                 <span class="save-status" aria-live="polite"></span>
             </div>
         </div>
-        <div class="setting-row stacked" data-search="cmp path detection model context memory path boundary switch">
+        <div class="setting-row stacked" data-search="cmp path detection legacy model context memory fallback">
             <div class="setting-row-text">
-                <div class="setting-row-title">Path Detection Model (CMP)</div>
+                <div class="setting-row-title">Path Detection Legacy Model (CMP)</div>
                 <div class="setting-row-desc">
-                    Model used by Context Memory Path for task-boundary decisions
-                    (continue / return / branch) and path card summarization.
-                    Accuracy here decides when a new session path is opened —
-                    a stronger model is recommended if path switching misfires.
+                    Fallback model used when the Path Detection Decision Model is not configured or cannot return a valid result.
                 </div>
             </div>
             <div class="setting-row-control">
@@ -233,11 +259,12 @@
 </section>
 
 <!-- ================= Agent Behavior ================= -->
-<section class="setting-group" id="group-agent-behavior">
+<section class="setting-group subpage" id="group-agent-behavior" data-page="general-agent-behavior">
     <div class="setting-group-head">
         <i data-lucide="bot"></i>
         <h3>Agent Behavior</h3>
     </div>
+    <p class="setting-group-desc">How agents handle messages, tools and commands.</p>
     <div class="setting-group-body">
         <div class="setting-row" data-search="message wrapper preferences instructions personal facts learn">
             <div class="setting-row-text">
@@ -291,15 +318,51 @@
                 <span class="save-status" aria-live="polite"></span>
             </div>
         </div>
+        <div class="setting-row" data-search="root filesystem scan guard find tree approval prompt performance slow">
+            <div class="setting-row-text">
+                <div class="setting-row-title">Root Filesystem Scan Guard</div>
+                <div class="setting-row-desc">
+                    Ask for approval before running a root-wide scan
+                    (<code>find /</code>, <code>tree /</code>) &mdash; a full-root scan can
+                    stall the turn. Applies to every agent, including super agents and
+                    agents with the Safety Checker off. When disabled, root scans run
+                    directly. The <code>RFS_GUARD_DISABLED=1</code> env var overrides this
+                    setting and force-disables the guard.
+                </div>
+            </div>
+            <div class="setting-row-control">
+                <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" id="root-fs-scan-guard-toggle" class="sr-only peer"
+                           data-setting-key="root_fs_scan_guard_enabled" data-setting-type="bool">
+                    <span class="dyn-toggle"></span>
+                </label>
+                <span class="save-status" aria-live="polite"></span>
+            </div>
+        </div>
+        <div class="setting-row" data-search="agent sidebar limit maximum agents shown list">
+            <div class="setting-row-text">
+                <div class="setting-row-title">Agent Sidebar Limit</div>
+                <div class="setting-row-desc">
+                    Maximum number of agents shown in the sidebar. Range: 1&ndash;500.
+                </div>
+            </div>
+            <div class="setting-row-control">
+                <input type="number" id="agent-sidebar-limit-input" class="setting-num"
+                       min="1" max="500"
+                       data-setting-key="agent_sidebar_limit" data-setting-type="int" />
+                <span class="save-status" aria-live="polite"></span>
+            </div>
+        </div>
     </div>
 </section>
 
 <!-- ================= Reliability & Concurrency ================= -->
-<section class="setting-group" id="group-reliability">
+<section class="setting-group subpage" id="group-reliability" data-page="general-reliability">
     <div class="setting-group-head">
         <i data-lucide="activity"></i>
         <h3>Reliability &amp; Concurrency</h3>
     </div>
+    <p class="setting-group-desc">Retries, timeouts and concurrency limits.</p>
     <div class="setting-group-body">
         <div class="setting-row" data-search="agent timeout retries automatic retry llm chat">
             <div class="setting-row-text">
@@ -392,15 +455,33 @@
                 <span class="save-status" aria-live="polite"></span>
             </div>
         </div>
+        <div class="setting-row" data-search="max goal nudges continuation goal budget limit /goal loop">
+            <div class="setting-row-text">
+                <div class="setting-row-title">Max Goal Nudges</div>
+                <div class="setting-row-desc">
+                    How many times the goal evaluator may nudge the agent to keep
+                    working before an unachieved <code>/goal</code> is abandoned.
+                    0 disables nudges (the goal is cleared on the first final
+                    response). Range: 0&ndash;50.
+                </div>
+            </div>
+            <div class="setting-row-control">
+                <input type="number" id="max-goal-nudges-input" class="setting-num"
+                       min="0" max="50"
+                       data-setting-key="max_goal_nudges" data-setting-type="int" />
+                <span class="save-status" aria-live="polite"></span>
+            </div>
+        </div>
     </div>
 </section>
 
 <!-- ================= WhatsApp Safe Delivery ================= -->
-<section class="setting-group" id="group-whatsapp-safe-delivery">
+<section class="setting-group subpage" id="group-whatsapp-safe-delivery" data-page="general-whatsapp-safe-delivery">
     <div class="setting-group-head">
         <i data-lucide="shield-check"></i>
         <h3>WhatsApp Safe Delivery</h3>
     </div>
+    <p class="setting-group-desc">Pacing and safety limits for WhatsApp delivery.</p>
     <div class="setting-group-body">
         <div class="setting-row" data-search="whatsapp safe delivery outbound queue pacing suspension protection">
             <div class="setting-row-text">
@@ -508,12 +589,29 @@
 </section>
 
 <!-- ================= Privacy & Access ================= -->
-<section class="setting-group" id="group-privacy">
+<section class="setting-group subpage" id="group-privacy" data-page="general-privacy">
     <div class="setting-group-head">
         <i data-lucide="lock"></i>
         <h3>Privacy &amp; Access</h3>
     </div>
+    <p class="setting-group-desc">Public history and access options.</p>
     <div class="setting-group-body">
+        <div class="setting-row" data-search="two factor authentication 2fa totp authenticator google authy login security">
+            <div class="setting-row-text">
+                <div class="setting-row-title">Two-Factor Authentication</div>
+                <div class="setting-row-desc" id="two-factor-auth-description">
+                    Require a six-digit authenticator-app code after the administrator password.
+                    Set <code>ENABLE_2FA=true</code> or <code>ENABLE_2FA=false</code> to override this setting from the environment.
+                </div>
+            </div>
+            <div class="setting-row-control">
+                <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" id="two-factor-auth-toggle" class="sr-only peer">
+                    <span class="dyn-toggle"></span>
+                </label>
+                <span class="save-status" id="two-factor-auth-status" aria-live="polite"></span>
+            </div>
+        </div>
         <div class="setting-row" data-search="public history unauthenticated read-only evaluation data access">
             <div class="setting-row-text">
                 <div class="setting-row-title">Public History</div>

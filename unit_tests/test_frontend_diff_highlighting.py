@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from unit_tests._node_runtime import node_bin
+
 
 ROOT = Path(__file__).resolve().parents[1]
 RENDERERS = ROOT / "static/js/chat-ui/renderers.js"
@@ -45,8 +47,9 @@ process.stdout.write(highlightDiff(patch));
 
 
 def _highlight_diff(patch: str) -> str:
-    if not shutil.which("node"):
-        pytest.skip("Node.js is required for the frontend diff renderer test")
+    node = node_bin()
+    if not node:
+        pytest.skip("A working Node.js runtime is required for the frontend diff renderer test")
 
     script = _RUNNER_SCRIPT.replace("{renderers_path}", str(RENDERERS))
 
@@ -58,7 +61,7 @@ def _highlight_diff(patch: str) -> str:
 
     try:
         result = subprocess.run(
-            ["node", runner_path, json.dumps(patch)],
+            [node, runner_path, json.dumps(patch)],
             cwd=str(ROOT),
             check=True,
             capture_output=True,

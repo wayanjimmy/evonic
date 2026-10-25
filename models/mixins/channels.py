@@ -254,7 +254,7 @@ class ChannelMixin:
 
     @staticmethod
     def _generate_pair_code() -> str:
-        """Generate 6-char pairing code (unambiguous charset, no hyphen)."""
+        """Generate an EVN-XXXX pairing code (unambiguous charset)."""
         from backend.channels.pairing import generate_pair_code as _gen
         return _gen()
 

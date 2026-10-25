@@ -146,9 +146,11 @@ class _FakeBackend:
     def __init__(self, stdout):
         self.stdout = stdout
         self.calls = 0
+        self.envs = []
 
     def run_bash(self, script, timeout, env):
         self.calls += 1
+        self.envs.append(env)
         return {'stdout': self.stdout, 'exit_code': 0}
 
 
@@ -177,6 +179,7 @@ def poll(monkeypatch):
         config.update(cfg)
         result = monitors.run_monitor_poll(config)
         result['backend_calls'] = backend.calls
+        result['probe_env'] = backend.envs[-1] if backend.envs else None
         return result, sent
 
     return _run
@@ -184,7 +187,8 @@ def poll(monkeypatch):
 
 def test_poll_waits_while_running(poll):
     result, sent = poll("__EVMON__\nS:RUNNING\nT:\nbuilding\n", {'on_exit': True})
-    assert result == {'done': False, 'state': 'waiting', 'backend_calls': 1}
+    assert result == {'done': False, 'state': 'waiting', 'backend_calls': 1,
+                      'probe_env': {}}
     assert sent == []
 
 
@@ -221,6 +225,43 @@ def test_poll_fires_on_shell_predicate(poll):
     result, sent = poll("__EVMON__\nH:1\n", {'shell': 'curl -sf localhost'})
     assert result['state'] == 'matched'
     assert 'shell predicate succeeded' in sent[0]['message']
+
+
+def _stub_agent_variables(monkeypatch):
+    monkeypatch.setattr('models.db.db.get_agent_variables', lambda aid: [
+        {'key': 'GITLAB_PAT', 'value': 'tok-123', 'is_secret': 0},
+    ])
+
+
+def test_poll_shell_predicate_gets_agent_variables(poll, monkeypatch):
+    # Regression: the probe used to run with an empty env, so an agent-authored
+    # predicate referencing $GITLAB_PAT silently evaluated to no token.
+    _stub_agent_variables(monkeypatch)
+    result, _ = poll("__EVMON__\nH:1\n",
+                     {'shell': 'curl -sf -H "PRIVATE-TOKEN: $GITLAB_PAT" localhost'})
+    assert result['state'] == 'matched'
+    assert result['probe_env'] == {'GITLAB_PAT': 'tok-123'}
+
+
+def test_poll_log_probe_stays_env_free(poll, monkeypatch):
+    _stub_agent_variables(monkeypatch)
+    result, _ = poll("__EVMON__\nS:RUNNING\nM:0\n", {'log_match': 'ERROR'})
+    assert result['probe_env'] == {}
+
+
+def test_poll_exit_probe_stays_env_free(poll, monkeypatch):
+    _stub_agent_variables(monkeypatch)
+    result, _ = poll("__EVMON__\nS:RUNNING\n", {'on_exit': True})
+    assert result['probe_env'] == {}
+
+
+def test_poll_shell_predicate_survives_variable_lookup_failure(poll, monkeypatch):
+    def _boom(aid):
+        raise RuntimeError('db down')
+    monkeypatch.setattr('models.db.db.get_agent_variables', _boom)
+    result, _ = poll("__EVMON__\nH:0\n", {'shell': 'true'})
+    assert result == {'done': False, 'state': 'waiting', 'backend_calls': 1,
+                      'probe_env': {}}
 
 
 def test_poll_expires(poll):

@@ -47,6 +47,29 @@ def _get_super_agent_id():
     return cfg.get('SUPER_AGENT_ID', DEFAULT_SUPER_AGENT_ID) or DEFAULT_SUPER_AGENT_ID
 
 
+def _task_flash_enabled() -> bool:
+    """Whether the Kanban board flashes task titles when agents call tools."""
+    try:
+        from backend.plugin_manager import plugin_manager
+        value = plugin_manager.get_plugin_config('kanban').get('TASK_FLASH_ENABLED', True)
+    except Exception:
+        return True
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def _task_flash_decay_seconds() -> int:
+    """Fade-out duration in seconds for the task title flash."""
+    try:
+        from backend.plugin_manager import plugin_manager
+        cfg = plugin_manager.get_plugin_config('kanban')
+        decay = int(float(cfg.get('TASK_FLASH_DECAY_SECONDS', 1) or 1))
+    except Exception:
+        decay = 1
+    return max(1, min(decay, 3600))
+
+
 def _get_request_agent_id():
     return request.headers.get('X-Agent-Id', '').strip() or None
 
@@ -262,7 +285,12 @@ def create_blueprint():
 
     @bp.route('/board/kanban')
     def kanban_page():
-        return render_template('kanban.html', super_agent_id=_get_super_agent_id())
+        return render_template(
+            'kanban.html',
+            super_agent_id=_get_super_agent_id(),
+            task_flash_enabled=_task_flash_enabled(),
+            task_flash_decay_seconds=_task_flash_decay_seconds(),
+        )
 
     @bp.route('/api/kanban/tasks', methods=['GET'])
     def kanban_api_get():
@@ -846,7 +874,13 @@ def create_blueprint():
 
         # Trigger the agent using the same notify path as the kanban scheduler
         try:
-            from plugins.kanban.handler import _notify_agent, _load_config
+            # NOTE: relative import on purpose — resolves to the same handler module
+            # instance the plugin lifecycle manager loaded (plugin_pkg_kanban_*.handler),
+            # whose event handlers run the scans. An absolute import would create a
+            # second module instance with separate in-memory state (e.g. _notifier_paused).
+            from .handler import _is_notifier_paused, _notify_agent, _load_config
+            if _is_notifier_paused():
+                return jsonify({'error': 'Kanban scanning is paused. Resume it before triggering agents.'}), 409
             cfg = _load_config()
             channel_type = cfg.get('CHANNEL_TYPE', 'telegram')
             result = _notify_agent(agent_id, task, channel_type, force=True, force_delay=True)
@@ -876,7 +910,7 @@ def create_blueprint():
     def kanban_notifier_status():
         """Get current notifier paused state."""
         try:
-            from plugins.kanban.handler import _is_notifier_paused
+            from .handler import _is_notifier_paused
             return jsonify({'paused': _is_notifier_paused()})
         except Exception as e:
             return jsonify({'error': str(e)}), 500
@@ -885,14 +919,13 @@ def create_blueprint():
     def kanban_notifier_toggle():
         """Toggle the notifier paused state. Request body: {"paused": true/false}"""
         try:
-            from plugins.kanban.handler import _is_notifier_paused, _set_notifier_paused
+            from .handler import _is_notifier_paused, _set_notifier_paused
             data = request.get_json() or {}
             if 'paused' in data:
                 new_state = bool(data['paused'])
             else:
                 new_state = not _is_notifier_paused()
-            _set_notifier_paused(new_state)
-            return jsonify({'paused': new_state})
+            return jsonify({'paused': _set_notifier_paused(new_state)})
         except Exception as e:
             return jsonify({'error': str(e)}), 500
 
@@ -902,8 +935,17 @@ def create_blueprint():
     def kanban_agent_check():
         """Force an immediate scan for eligible agents."""
         try:
-            from plugins.kanban.handler import _scan_and_notify
+            from .handler import _scan_and_notify
             scan_results = _scan_and_notify()
+            if scan_results.get('paused'):
+                return jsonify({
+                    'success': False,
+                    'paused': True,
+                    'message': 'Kanban scanning is paused. Resume it before triggering agents.',
+                    'notified': 0,
+                    'failed': 0,
+                    'details': [],
+                }), 409
             return jsonify({
                 'success': True,
                 'message': 'Check complete',
@@ -918,7 +960,7 @@ def create_blueprint():
     def kanban_agent_propose():
         """Return a proposed round-robin assignment plan for unassigned todo tasks."""
         try:
-            from plugins.kanban.handler import _load_config, _get_kanban_skill_agents
+            from .handler import _load_config, _get_kanban_skill_agents
             config = _load_config()
             eligible = _get_kanban_skill_agents()
 
@@ -949,7 +991,7 @@ def create_blueprint():
     def kanban_eligible_agents():
         """Return the list of eligible agents (id + name) — agents with kanban skill."""
         try:
-            from plugins.kanban.handler import _get_kanban_skill_agents
+            from .handler import _get_kanban_skill_agents
             from models.db import db as main_db
 
             eligible_ids = _get_kanban_skill_agents()
@@ -979,7 +1021,7 @@ def create_blueprint():
 
             all_agents = main_db.get_agents()
             try:
-                from plugins.kanban.handler import _get_kanban_skill_agents
+                from .handler import _get_kanban_skill_agents
                 eligible_ids = set(_get_kanban_skill_agents())
             except Exception:
                 eligible_ids = set()
@@ -1004,7 +1046,7 @@ def create_blueprint():
         """Use LLM to match unassigned tasks to best-fit eligible agents."""
         import re
         try:
-            from plugins.kanban.handler import _load_config, _get_kanban_skill_agents
+            from .handler import _load_config, _get_kanban_skill_agents
             from backend.llm_client import get_llm_client
             from models.db import db as main_db
 
@@ -1098,7 +1140,7 @@ def create_blueprint():
     def kanban_agent_assign():
         """Confirm batch assignment of tasks to agents, then notify each agent."""
         try:
-            from plugins.kanban.handler import _load_config, _notify_agent
+            from .handler import _load_config, _notify_agent
 
             data = request.get_json()
             if not data or 'assignments' not in data:

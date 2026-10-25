@@ -47,14 +47,17 @@ class EffectiveRequest:
     model: str
     path: str = "primary"
 
-    def derive(self, *, messages=None, provider=None, model=None, path=None):
+    def derive(self, *, messages=None, tools=None, provider=None, model=None, path=None):
         """Derive a provider-compatible representation from this exact payload."""
         from backend.llm_usage_events import estimate_context_tokens
         effective_messages = self.messages if messages is None else messages
+        effective_tools = self.tools if tools is None else tools
         return replace(
             self,
             messages=effective_messages,
+            tools=effective_tools,
             effective_message_tokens=estimate_context_tokens(effective_messages, None),
+            effective_tool_tokens=estimate_context_tokens([], effective_tools),
             provider=self.provider if provider is None else str(provider or ""),
             model=self.model if model is None else str(model or ""),
             path=self.path if path is None else path,
@@ -77,6 +80,17 @@ class EffectiveRequest:
 # Short polling keeps /stop responsive while parallel tool workers are running.
 # The total wait remains bounded by AGENT_PARALLEL_TOOL_WAIT_TIMEOUT.
 _PARALLEL_TOOL_POLL_INTERVAL_SECONDS = 0.1
+
+# Injected once per turn when implementation work happened but the agent never
+# called update_tasks — the final answer is held back until the model reconciles.
+_TASK_BOOKKEEPING_REMINDER = (
+    "[SYSTEM REMINDER] You did implementation work this turn but did not "
+    "update your internal task list. Reconcile it now with update_tasks: "
+    "mark each task you finished as done (update_tasks(action='done', "
+    "task_id=N)) and keep only work you are actively continuing as "
+    "in_progress. Then repeat your final answer. If the list is already "
+    "accurate, repeat your final answer unchanged."
+)
 
 # ── Import from split modules ───────────────────────────────────────────────
 
@@ -367,8 +381,11 @@ from config import (AGENT_MAX_TOOL_ITERATIONS as MAX_TOOL_ITERATIONS,
                     AGENT_TIMEOUT_RETRIES as MAX_TIMEOUT_RETRIES,
                     ACTIVE_CONTEXT_MODE,
                     ACTIVE_CONTEXT_SOFT_TOKENS,
+                    ACTIVE_CONTEXT_CAPACITY_PERCENT,
                     ACTIVE_CONTEXT_RECENT_GROUPS,
-                    ACTIVE_CONTEXT_RECEIPT_MAX_CHARS)
+                    ACTIVE_CONTEXT_RECEIPT_MAX_CHARS,
+                    REQUEST_BUDGET_MODE,
+                    REQUEST_BUDGET_SAFETY_MARGIN)
 
 # RTK token compressor — lazy-init, do NOT load on module import
 _rtk_registry = None
@@ -390,6 +407,70 @@ def _extract_command(tool_name: str, args: dict) -> str:
     """
     from backend.token_compressor.extract_command import extract_command
     return extract_command(tool_name, args)
+
+
+def _new_thinking_stream(agent_id, session_id):
+    """Per-call live-thinking emitter, or None when streaming is disabled / unavailable."""
+    try:
+        from config import AGENT_STREAM_THINKING
+        if not AGENT_STREAM_THINKING or not session_id:
+            return None
+        from backend.agent_runtime.thinking_stream import make_realtime_thinking_emitter
+        return make_realtime_thinking_emitter(agent_id, session_id)
+    except Exception:
+        _logger.debug("thinking stream unavailable", exc_info=True)
+        return None
+
+
+def _tool_survives_pruning(fn_name: str,
+                           *,
+                           essential: set,
+                           builtin_fns: set,
+                           assigned_fns: set,
+                           loaded_skill_fns: set,
+                           eager_skill_fns: set,
+                           call_counts: Dict[str, int]) -> bool:
+    """Return True if a tool must remain in the schema sent to the LLM.
+
+    Mid-turn tool pruning removes zero-call tools after a few iterations to save
+    tokens, but only tools that are *not* already exempt. A tool stays when it is:
+
+    * ``essential`` -- core I/O plus workflow/control-plane tools that are
+      characteristically needed late in a turn (or at the very start of the next
+      one), so pruning them would strand the agent.
+    * ``builtin_fns`` -- any platform built-in tool. Built-ins back documented,
+      prompt-mandated capabilities (``remember``/``recall``, CMP path navigation,
+      the state-machine gate, ``reset_active_model``, ...). Because the agent's
+      SYSTEM.md tells it to use these, silently dropping them from the schema
+      makes the agent believe the tool does not exist.
+    * ``assigned_fns`` -- tools explicitly assigned to this agent.
+    * ``loaded_skill_fns`` / ``eager_skill_fns`` -- tools advertised by enabled
+      or eagerly loaded skills.
+    * anything already called this turn (``call_counts > 0``).
+    """
+    return bool(
+        fn_name in essential
+        or fn_name in builtin_fns
+        or fn_name in assigned_fns
+        or fn_name in loaded_skill_fns
+        or fn_name in eager_skill_fns
+        or call_counts.get(fn_name, 0) > 0
+    )
+
+
+def pop_safety_provenance(tool_result) -> dict:
+    """Remove and return the out-of-band safety provenance of a tool result.
+
+    Tools annotate their result dict with ``_safety`` (who produced the verdict:
+    DMSS, the deterministic rule engine, a guard).  The provenance belongs in the
+    timeline/SSE payload only — never in the LLM context, the persisted content,
+    or the user-visible tool output — so it is stripped here, exactly once.
+    """
+    if isinstance(tool_result, dict):
+        info = tool_result.pop('_safety', None)
+        if isinstance(info, dict):
+            return info
+    return {}
 
 
 def run_tool_loop(agent: Dict[str, Any],
@@ -419,6 +500,9 @@ def run_tool_loop(agent: Dict[str, Any],
     from backend.event_stream import event_stream
     from models.chatlog import chatlog_manager
 
+    def _message_id(value):
+        return value if type(value) in (int, str) else None
+
     agent_id = agent['id']
     db_agent_id = session_db_agent_id or agent_id  # which per-agent DB owns this session
     external_user_id = agent_context.get('user_id')
@@ -440,7 +524,6 @@ def run_tool_loop(agent: Dict[str, Any],
         _parent_agent_id = None
     _loop_ts = int(time.time() * 1000)
     chatlog.append({'type': 'turn_begin', 'session_id': session_id, 'ts': _loop_ts})
-    event_stream.emit('turn_begin', {'session_id': session_id, 'ts': _loop_ts})
 
     tool_trace = []
     timeline = []
@@ -449,6 +532,8 @@ def run_tool_loop(agent: Dict[str, Any],
     # disable later automatic transitions for unrelated implementation tools.
     _successful_mutation = False
     _tool_errors = False
+    _explicit_task_update_turn = False  # any update_tasks call this turn (turn-scoped)
+    _task_reminder_fired = False        # bookkeeping reminder fires at most once per turn
 
     def _is_mutating_tool(tool_name: str) -> bool:
         """Return whether a tool represents implementation work."""
@@ -510,10 +595,13 @@ def run_tool_loop(agent: Dict[str, Any],
     def _finalize_gate_response(response: str, source: str):
         duration = round(time.time() - _loop_start_time, 1)
         metadata = {'plugin_gate': source, 'thinking_duration': duration}
-        db.add_chat_message(session_id, 'assistant', response,
-                            agent_id=db_agent_id, metadata=metadata)
+        message_id = _message_id(db.add_chat_message(
+            session_id, 'assistant', response,
+            agent_id=db_agent_id, metadata=metadata,
+        ))
         chatlog.append({'type': 'final', 'session_id': session_id,
-                        'content': response, 'metadata': metadata})
+                        'content': response, 'metadata': metadata,
+                        'message_id': message_id})
         chatlog.append({'type': 'turn_end', 'session_id': session_id,
                         'thinking_duration': duration})
         event_stream.emit('final_answer', {
@@ -612,8 +700,15 @@ def run_tool_loop(agent: Dict[str, Any],
     # --- Tool pruning: track how many times each tool has been called in this loop ---
     _tool_call_counts: Dict[str, int] = {}
     _TOOL_PRUNE_THRESHOLD = 3  # prune zero-call tools after this many iterations
+    # Workflow / control-plane tools are never pruned. They are characteristically
+    # needed *late* in a turn (after the threshold has already been crossed) or at
+    # the very start of the next one: state() drives the plugin state machines
+    # (e.g. state('kanban:finish') releases task focus) and use_skill() is the only
+    # way to (re)load a lazy skill's toolset. Pruning them strands workflow state --
+    # the agent finishes a task but can never close it, leaving focus held.
     _ESSENTIAL_TOOLS = {'bash', 'runpy', 'read_file', 'str_replace', 'write_file', 'patch',
-                        'set_mode', 'save_plan', 'update_tasks'}
+                        'set_mode', 'save_plan', 'update_tasks',
+                        'state', 'use_skill', 'unload_skill'}
 
     # Eager skill tools (e.g. explorer's Explore, direxplorer's Grep/Glob/Read)
     # are advertised upfront by build_tools() — never prune them mid-turn, or the
@@ -631,13 +726,52 @@ def run_tool_loop(agent: Dict[str, Any],
     except Exception:
         pass
 
+    # Platform built-in tools are never pruned. They are a small, bounded set of
+    # control-plane capabilities referenced directly by the system prompt
+    # (remember/recall, CMP path navigation, the state-machine gate,
+    # reset_active_model, ...). Mid-turn pruning previously dropped them whenever
+    # they went uncalled past the threshold, silently removing the tool from the
+    # schema so the agent could no longer "find" a tool its SYSTEM.md mandates.
+    _builtin_tool_fns: set = set()
+    try:
+        _builtin_tool_fns = {
+            d.get('name', '')
+            for d in tool_registry.get_builtin_tool_defs()
+        }
+        _builtin_tool_fns.discard('')
+    except Exception:
+        pass
+
+    # Add restored skill tool IDs to assigned_tool_ids for authorization guard.
+    # Keep a corresponding set of function names so tools explicitly assigned to
+    # the agent remain available for the entire turn, even before first use.
+    _assigned = agent_context.get('assigned_tool_ids')
+    if _assigned is not None:
+        for sk_id, fns in _loaded_lazy_skills.items():
+            for fn in fns:
+                if fn:
+                    _tid = f'skill:{sk_id}:{fn}'
+                    if _tid not in _assigned:
+                        _assigned.append(_tid)
+    _assigned_tool_fns = {
+        tool_id.rsplit(':', 1)[-1]
+        for tool_id in (_assigned or [])
+        if tool_id
+    }
+
     def _prune_tools(tools_list: List[dict], iteration: int) -> List[dict]:
-        """Prune zero-call tools after the threshold iteration.
-        
+        """Prune uncalled tools after the threshold while retaining exempt ones.
+
         After _TOOL_PRUNE_THRESHOLD iterations, tools that have never been called
         (call count == 0) are removed from the list sent to the LLM, except for
-        essential tools and tools belonging to a loaded lazy skill. Lazy-skill
-        tools may be injected after the threshold and must get a chance to run.
+        essential tools (including the workflow/control-plane tools ``state``,
+        ``use_skill`` and ``unload_skill``), platform built-in tools (e.g.
+        ``remember``/``recall``, CMP path navigation, ``reset_active_model``),
+        tools explicitly assigned to the agent, and tools provided by enabled
+        skills. Assigned tools include vision and media tools such as
+        ``describe_image`` and ``transcribe_audio`` that may be needed only after
+        the agent discovers a relevant attachment. The keep-decision lives in the
+        module-level ``_tool_survives_pruning`` helper so it is unit-testable.
         """
         if iteration < _TOOL_PRUNE_THRESHOLD:
             return tools_list
@@ -649,10 +783,14 @@ def run_tool_loop(agent: Dict[str, Any],
         pruned = []
         for t in tools_list:
             fn_name = t.get('function', {}).get('name', '')
-            if (fn_name in _ESSENTIAL_TOOLS
-                    or fn_name in _loaded_skill_fns
-                    or fn_name in _eager_skill_fns
-                    or _tool_call_counts.get(fn_name, 0) > 0):
+            if _tool_survives_pruning(
+                    fn_name,
+                    essential=_ESSENTIAL_TOOLS,
+                    builtin_fns=_builtin_tool_fns,
+                    assigned_fns=_assigned_tool_fns,
+                    loaded_skill_fns=_loaded_skill_fns,
+                    eager_skill_fns=_eager_skill_fns,
+                    call_counts=_tool_call_counts):
                 pruned.append(t)
         if len(pruned) < len(tools_list):
             _logger.debug(
@@ -660,15 +798,28 @@ def run_tool_loop(agent: Dict[str, Any],
                 len(tools_list), len(pruned), iteration, _TOOL_PRUNE_THRESHOLD)
         return pruned
 
-    # Add restored skill tool IDs to assigned_tool_ids for authorization guard
-    _assigned = agent_context.get('assigned_tool_ids')
-    if _assigned is not None:
-        for sk_id, fns in _loaded_lazy_skills.items():
-            for fn in fns:
-                if fn:
-                    _tid = f'skill:{sk_id}:{fn}'
-                    if _tid not in _assigned:
-                        _assigned.append(_tid)
+    # Fast mode is a session preference. The Codex client revalidates support
+    # against every effective model, so it cannot leak into an incompatible fallback.
+    _session_service_tier = None
+    # Provider-reported prompt size of the previous request — the primary signal
+    # for proactive compaction on the first iteration of this turn (#842).
+    _last_provider_prompt_tokens = None
+    try:
+        _session_raw = db.get_session_state(session_id, agent_id=agent_id)
+        _session_data = json.loads(_session_raw) if _session_raw else {}
+        if isinstance(_session_data, dict):
+            if _session_data.get('service_tier') == 'priority':
+                _session_service_tier = 'priority'
+            # Seed from the persisted context usage, but only when the provider
+            # actually reported it: an estimated value is the same local
+            # estimator the projection already uses, so it adds no information.
+            _cu_seed = _session_data.get('context_usage')
+            if isinstance(_cu_seed, dict) and not _cu_seed.get('estimated'):
+                _seed_prompt = _cu_seed.get('prompt_tokens') or 0
+                if _seed_prompt > 0:
+                    _last_provider_prompt_tokens = int(_seed_prompt)
+    except (TypeError, ValueError):
+        pass
 
     # Helper: build model_config dict from a model DB row
     def _build_model_config(_model: dict) -> dict:
@@ -681,15 +832,32 @@ def run_tool_loop(agent: Dict[str, Any],
             'thinking': bool(_model.get('thinking', False)),
             'thinking_budget': int(_model.get('thinking_budget', 0) or 0),
             'max_tokens': _model.get('max_tokens', 32768),
+            'context_window': _model.get('context_window'),
             'temperature': _model.get('temperature'),
             'vision_supported': bool(_model.get('vision_supported', False)),
             'api_format': _model.get('api_format', 'openai'),
+            'service_tier': _session_service_tier,
         }
 
     # Resolve agent's default model for LLM calls
     agent_model_config = None
     _active_fallback_model_name = None  # for system message injection
     _using_global_default_model = False
+
+    # Per-session model override (chosen from the chat's model dialog). It only
+    # applies to this session: the agent's primary/fallback config is untouched.
+    _session_model_override = None
+    try:
+        _ov_id = (_session_data or {}).get('model_override_id') if isinstance(_session_data, dict) else None
+        if _ov_id:
+            _ov_model = db.get_model_by_id(_ov_id)
+            if _ov_model and _ov_model.get('enabled', True):
+                _session_model_override = _ov_model
+                agent_model_config = _build_model_config(_ov_model)
+                _logger.info("%s using session model override: %s (%s)", agent_id,
+                             _ov_model.get('name'), _ov_model.get('model_name'))
+    except Exception as e:
+        _logger.warning("Failed to apply session model override for %s: %s", agent_id, e)
 
     # Step 1: Check agent_state for persisted fallback model (cross-session).
     # If a fallback was persisted from a prior session, PROBE the primary model
@@ -698,7 +866,7 @@ def run_tool_loop(agent: Dict[str, Any],
     try:
         _as_raw = db.get_agent_state(agent_id)
         _as = json.loads(_as_raw) if _as_raw else {}
-        _fb_id = _as.get('active_fallback_model_id')
+        _fb_id = None if _session_model_override else _as.get('active_fallback_model_id')
         if _fb_id:
             _fb_model = db.get_model_by_id(_fb_id)
             if _fb_model and _fb_model.get('enabled', True):
@@ -773,8 +941,13 @@ def run_tool_loop(agent: Dict[str, Any],
         except Exception as e:
             _logger.warning("Failed to resolve model for agent %s: %s", agent_id, e)
 
-    # Create LLMClient with resolved model config
+    # Create LLMClient with resolved model config.
     llm = LLMClient(model_config=agent_model_config) if agent_model_config else llm_client
+    # Reuse the conversation id as the OpenCode Go/Zen session so repeated
+    # turns in the same conversation share routing/prompt-cache state. Only
+    # set on a per-loop client to avoid mutating the shared fallback client.
+    if agent_model_config and session_id:
+        llm.session_id = session_id
 
     # ATG: give the compile_task_graph builtin access to the resolved LLM.
     # Compiler calls acquire llm_lock per call (same discipline as the main call).
@@ -831,6 +1004,20 @@ def run_tool_loop(agent: Dict[str, Any],
                     _msg = {**_msg, 'content': _note}
             _patched.append(_msg)
         messages = _patched
+
+    # Vision-capable models read recent image attachments natively (on a copy of
+    # the messages; the canonical history stays text-only). Opt out per agent
+    # with the ``image_input_mode=describe`` variable.
+    if _vision_supported:
+        try:
+            from backend.agent_runtime import native_images
+            if native_images.native_mode_enabled(
+                    agent_model_config, db.get_agent_variables_dict(db_agent_id)):
+                messages = native_images.attach_native_images(
+                    messages, session_id, db_agent_id, db)
+        except Exception:
+            _logger.warning("Native image attachment failed; falling back to describe_image",
+                            exc_info=True)
 
     timeout_retries = 0
     MIN_IMAGE_RETRIES = 3
@@ -949,11 +1136,14 @@ def run_tool_loop(agent: Dict[str, Any],
                 _logger.info("Stop signal received during ATG execution for session %s", session_id)
                 stop_msg = "Agent stopped by user request."
                 _atg_stop_dur = round(time.time() - _loop_start_time, 1)
-                db.add_chat_message(session_id, 'assistant', stop_msg, agent_id=db_agent_id,
-                                    metadata={"timeline": timeline, "stopped": True,
-                                              "thinking_duration": _atg_stop_dur})
+                message_id = _message_id(db.add_chat_message(
+                    session_id, 'assistant', stop_msg, agent_id=db_agent_id,
+                    metadata={"timeline": timeline, "stopped": True,
+                              "thinking_duration": _atg_stop_dur},
+                ))
                 chatlog.append({'type': 'final', 'session_id': session_id, 'content': stop_msg,
-                                'metadata': {'stopped': True, 'thinking_duration': _atg_stop_dur}})
+                                'metadata': {'stopped': True, 'thinking_duration': _atg_stop_dur},
+                                'message_id': message_id})
                 chatlog.append({'type': 'turn_end', 'session_id': session_id,
                                 'thinking_duration': _atg_stop_dur})
                 event_stream.emit('final_answer', {
@@ -1025,7 +1215,8 @@ def run_tool_loop(agent: Dict[str, Any],
                                               atg_enabled=bool(agent_context.get('enable_atg')),
                                               cmp_enabled=bool(agent_context.get('enable_cmp')),
                                               agent_name=agent_context.get('agent_name')
-                                                         or agent_context.get('name'))}
+                                                         or agent_context.get('name'),
+                                              update_tasks_available='update_tasks' in _available_tool_names)}
             state_idx = next(
                 (i for i, m in enumerate(messages)
                  if m.get('role') == 'system' and '## Agent State' in m.get('content', '')),
@@ -1098,9 +1289,14 @@ def run_tool_loop(agent: Dict[str, Any],
         # Select tools once, then project and validate the messages against that
         # exact schema set. Every provider path below derives from this snapshot.
         from backend.agent_runtime.active_context import (
-            ActiveContextProjection, project_active_context)
+            ActiveContextProjection, project_active_context, resolve_soft_token_threshold)
         from backend.llm_usage_events import estimate_context_tokens
         _effective_tools = _prune_tools(tools, _iteration) if tools else None
+        _active_context_threshold = resolve_soft_token_threshold(
+            ACTIVE_CONTEXT_SOFT_TOKENS,
+            (agent_model_config or {}).get('context_window'),
+            ACTIVE_CONTEXT_CAPACITY_PERCENT,
+        )
         try:
             _active_projection = project_active_context(
                 messages,
@@ -1108,7 +1304,8 @@ def run_tool_loop(agent: Dict[str, Any],
                 mode=ACTIVE_CONTEXT_MODE,
                 recent_completed_groups=ACTIVE_CONTEXT_RECENT_GROUPS,
                 receipt_max_chars=ACTIVE_CONTEXT_RECEIPT_MAX_CHARS,
-                soft_token_threshold=ACTIVE_CONTEXT_SOFT_TOKENS,
+                soft_token_threshold=_active_context_threshold,
+                provider_prompt_tokens=_last_provider_prompt_tokens,
             )
         except Exception as _active_exc:
             _active_projection = ActiveContextProjection(
@@ -1126,10 +1323,21 @@ def run_tool_loop(agent: Dict[str, Any],
                 session_id, _active_projection.error)
         elif _active_projection.applied:
             _logger.info(
-                "active_context applied session=%s mode=%s canonical=%d projected=%d saved=%d groups=%d",
+                "active_context applied session=%s mode=%s canonical=%d projected=%d saved=%d groups=%d trigger=%s",
                 session_id, _active_projection.mode, _active_projection.canonical_tokens,
                 _active_projection.projected_tokens, _active_projection.saved_tokens,
-                _active_projection.compacted_groups)
+                _active_projection.compacted_groups, _active_projection.trigger_source)
+        elif _active_projection.no_eligible_groups:
+            # The usage signal crossed the threshold, but every completed tool
+            # group is ineligible (unknown tool, error result, or inside the
+            # recent frontier): the request goes out unchanged.  Surface it so
+            # an un-compacted near-full window is diagnosable (#842).
+            _logger.warning(
+                "active_context threshold reached but no eligible tool groups to compact "
+                "session=%s mode=%s usage_signal=%d (provider=%d local=%d) completed_groups=%d",
+                session_id, _active_projection.mode, _active_projection.usage_signal,
+                _active_projection.provider_prompt_tokens, _active_projection.canonical_tokens,
+                _active_projection.completed_groups)
         _request_messages = (
             _active_projection.messages
             if (_active_projection.mode == 'enforced'
@@ -1166,6 +1374,34 @@ def run_tool_loop(agent: Dict[str, Any],
 
         # LOCK ORDERING: Main path — llm_lock only. No other locks held here.
         _enable_thinking_this_call = not _thinking_budget_aborted
+        _thinking_stream = _new_thinking_stream(agent_id, session_id)
+        # This final preflight is intentionally adjacent to the provider call:
+        # prior projection is advisory; every actual provider/model target gets
+        # an independently planned payload.
+        from backend.agent_runtime.request_budget import plan_request
+        _required_choice = _required_tool if _required_tool_pending else None
+        _budget_plan = plan_request(
+            _request.messages, _request.tools, tool_choice=_required_choice,
+            context_window=(agent_model_config or {}).get('context_window'),
+            max_tokens=(agent_model_config or {}).get('max_tokens'),
+            thinking_budget=((agent_model_config or {}).get('thinking_budget')
+                             if _enable_thinking_this_call else 0),
+            safety_margin=REQUEST_BUDGET_SAFETY_MARGIN,
+            enforce=REQUEST_BUDGET_MODE == 'enforced',
+        )
+        event_stream.emit('llm_request_budget', {
+            'agent_id': agent_id, 'session_id': session_id, 'attempt': _iteration,
+            'mode': REQUEST_BUDGET_MODE, 'path': _request.path,
+            **_budget_plan.metrics(),
+        })
+        if REQUEST_BUDGET_MODE == 'enforced' and not _budget_plan.fit:
+            _logger.error('request_budget irreducible session=%s path=%s fingerprint=%s',
+                          session_id, _request.path, _budget_plan.fingerprint)
+            return ("The current request exceeds this model's safe context budget and cannot be reduced without removing required context.", tool_trace, timeline)
+        if REQUEST_BUDGET_MODE == 'enforced':
+            _request = _request.derive(messages=_budget_plan.messages, tools=_budget_plan.tools,
+                                       path='budget_' + _budget_plan.stage)
+            _required_choice = _budget_plan.tool_choice
         with llm_lock:
             result = llm.chat_completion(
                 messages=_request.messages,
@@ -1174,8 +1410,11 @@ def run_tool_loop(agent: Dict[str, Any],
                 enable_thinking=_enable_thinking_this_call,
                 max_tokens=None,
                 log_file=llm_log_path,
-                tool_choice=_required_tool if _required_tool_pending else None,
+                tool_choice=_required_choice,
+                **({'stream_callback': _thinking_stream} if _thinking_stream else {}),
             )
+        if _thinking_stream:
+            _thinking_stream.flush()
 
         # Check A: stop signal check after LLM call (earliest safe point)
         if stop_event.is_set():
@@ -1183,10 +1422,14 @@ def run_tool_loop(agent: Dict[str, Any],
             _logger.info("Stop signal received for session %s — aborting loop", session_id)
             stop_msg = "Agent stopped by user request."
             _stop_dur = round(time.time() - _loop_start_time, 1)
-            db.add_chat_message(session_id, 'assistant', stop_msg, agent_id=db_agent_id,
-                                metadata={"timeline": timeline, "stopped": True, "thinking_duration": _stop_dur})
+            message_id = _message_id(db.add_chat_message(
+                session_id, 'assistant', stop_msg, agent_id=db_agent_id,
+                metadata={"timeline": timeline, "stopped": True,
+                          "thinking_duration": _stop_dur},
+            ))
             chatlog.append({'type': 'final', 'session_id': session_id, 'content': stop_msg,
-                            'metadata': {'stopped': True, 'thinking_duration': _stop_dur}})
+                            'metadata': {'stopped': True, 'thinking_duration': _stop_dur},
+                            'message_id': message_id})
             _stop_inj = ("[SYSTEM] Your previous reasoning and response were forcefully "
                          "interrupted by the user via /stop before completion. "
                          "Await the user's next instruction.")
@@ -1444,6 +1687,7 @@ def run_tool_loop(agent: Dict[str, Any],
                 # A no-op truncation falls through to the fallback model, which
                 # reuses this request snapshot rather than restoring canonical data.
 
+
             if _compaction_attempted:
                 event_stream.emit('llm_retry', {
                     'agent_id': agent_id, 'session_id': session_id,
@@ -1520,21 +1764,58 @@ def run_tool_loop(agent: Dict[str, Any],
                             _logger.warning(
                                 "Stripped image content for fallback model %s (%s) — fallback does not support vision",
                                 _fallback_model.get('name'), _fallback_model.get('model_name'))
-                    event_stream.emit('llm_effective_request', {
+                    # Re-plan after fallback vision adaptation: fallback capacity
+                    # and provider framing may be smaller than the primary model.
+                    from backend.agent_runtime.request_budget import plan_request
+                    _fallback_choice = _required_tool if _required_tool_pending else None
+                    _fallback_plan = plan_request(
+                        _fallback_request.messages, _fallback_request.tools,
+                        tool_choice=_fallback_choice,
+                        context_window=_fallback_config.get('context_window'),
+                        max_tokens=_fallback_config.get('max_tokens'),
+                        thinking_budget=(_fallback_config.get('thinking_budget')
+                                         if _enable_thinking_this_call else 0),
+                        safety_margin=REQUEST_BUDGET_SAFETY_MARGIN,
+                        enforce=REQUEST_BUDGET_MODE == 'enforced',
+                    )
+                    event_stream.emit('llm_request_budget', {
                         'agent_id': agent_id, 'session_id': session_id,
-                        **_fallback_request.metrics(),
+                        'attempt': _iteration, 'mode': REQUEST_BUDGET_MODE,
+                        'path': 'fallback', **_fallback_plan.metrics(),
                     })
-                    with llm_lock:
-                        _fallback_result = _fallback_llm.chat_completion(
-                            messages=_fallback_request.messages,
-                            tools=_fallback_request.tools,
-                            temperature=None,
-                            enable_thinking=_enable_thinking_this_call,
-                            max_tokens=None,
-                            log_file=llm_log_path,
-                            tool_choice=(
-                                _required_tool if _required_tool_pending else None),
-                        )
+                    if REQUEST_BUDGET_MODE == 'enforced' and not _fallback_plan.fit:
+                        _logger.error('fallback request_budget irreducible session=%s fingerprint=%s',
+                                      session_id, _fallback_plan.fingerprint)
+                        _fallback_result = {'success': False, 'error_type': 'context_budget_exceeded',
+                                            'error_detail': _fallback_plan.diagnostic}
+                    else:
+                        if (REQUEST_BUDGET_MODE == 'enforced'
+                                and _fallback_plan.stage != 'initial'):
+                            _fallback_request = _fallback_request.derive(
+                                messages=_fallback_plan.messages, tools=_fallback_plan.tools,
+                                path='fallback_budget_' + _fallback_plan.stage)
+                        _fallback_choice = _fallback_plan.tool_choice
+                        event_stream.emit('llm_effective_request', {
+                            'agent_id': agent_id, 'session_id': session_id,
+                            **_fallback_request.metrics(),
+                        })
+                    if REQUEST_BUDGET_MODE != 'enforced' or _fallback_plan.fit:
+                        with llm_lock:
+                            _fb_stream = _new_thinking_stream(agent_id, session_id)
+                            if _fb_stream:
+                                _fb_stream.reset(force=True)   # clear failed primary output
+                            _fallback_result = _fallback_llm.chat_completion(
+                                messages=_fallback_request.messages,
+                                tools=_fallback_request.tools,
+                                temperature=None,
+                                enable_thinking=_enable_thinking_this_call,
+                                max_tokens=None,
+                                log_file=llm_log_path,
+                                tool_choice=_fallback_choice,
+                                **({'stream_callback': _fb_stream} if _fb_stream else {}),
+                            )
+                            if _fb_stream:
+                                _fb_stream.flush()
                     if _fallback_result.get('success'):
                         _logger.info(
                             "Fallback model %s succeeded for agent %s — using for remaining iterations",
@@ -1548,7 +1829,7 @@ def run_tool_loop(agent: Dict[str, Any],
                         result = _fallback_result
                         _request = _fallback_request
                         _fallback_succeeded = True
-                        if not _using_global_fallback:
+                        if not _using_global_fallback and not _session_model_override:
                             # Persist per-agent fallback model ID to agent_state.
                             try:
                                 _as_raw = db.get_agent_state(agent_id)
@@ -1651,7 +1932,16 @@ def run_tool_loop(agent: Dict[str, Any],
 
         # Context telemetry is attributed to the exact successful provider
         # snapshot, including its projected messages and pruned tool schemas.
-        _cu_prompt = result.get('prompt_tokens') or 0
+        # Preserve a genuine provider value separately for the *next* tool-loop
+        # request.  A local fallback estimate must never masquerade as provider
+        # usage, because it cannot correct the estimator/provider mismatch that
+        # proactive compaction is meant to guard against (#842).
+        _reported_prompt = result.get('prompt_tokens') or 0
+        try:
+            _last_provider_prompt_tokens = max(0, int(_reported_prompt)) or None
+        except (TypeError, ValueError):
+            _last_provider_prompt_tokens = None
+        _cu_prompt = _reported_prompt
         _cu_estimated = False
         if _cu_prompt <= 0:
             try:
@@ -1931,6 +2221,24 @@ def run_tool_loop(agent: Dict[str, Any],
                     "content": build_corrective_injection(local_links),
                 })
 
+            # Core guard: internal task bookkeeping. When implementation work
+            # happened this turn but the agent never called update_tasks,
+            # remind once and re-enter the loop so it can reconcile before
+            # the final answer is accepted.
+            _ms_reminder = agent_context.get('agent_state')
+            if (_ms_reminder is not None
+                    and not _task_reminder_fired
+                    and not _explicit_task_update_turn
+                    and _successful_mutation
+                    and _ms_reminder.mode == 'execute'
+                    and 'update_tasks' in _available_tool_names
+                    and any(t.get('status') in ('pending', 'in_progress')
+                            for t in _ms_reminder.tasks)
+                    and not stop_event.is_set()):
+                _task_reminder_fired = True
+                pre_final_injections.append(
+                    {"role": "user", "content": _TASK_BOOKKEEPING_REMINDER})
+
             if pre_final_injections:
                 # Save this response as an intermediate assistant message so the
                 # LLM sees it as context, then append the injected instructions.
@@ -1945,10 +2253,59 @@ def run_tool_loop(agent: Dict[str, Any],
                     messages.append(inj)
                 continue  # re-enter loop so LLM can act on the injected reminder
 
+            # ── Active goal completion gate ───────────────────────────
+            # Before committing the candidate answer, ask the goal evaluator
+            # whether the session goal is actually done. complete/blocked (or
+            # an exhausted nudge budget) clears the goal so the Session State
+            # "Goal mode" indicator disappears; continue keeps the candidate as
+            # an intermediate step and emits a visible, session-persisted nudge
+            # so the agent keeps working on the objective. Nothing is injected
+            # into the system prompt.
+            _goal_ms = agent_context.get('agent_state')
+            if (_goal_ms is not None and getattr(_goal_ms, 'active_goal', None)
+                    and not stop_event.is_set()):
+                from backend.goal_runtime import (
+                    ACTION_NUDGE,
+                    clear_active_goal,
+                    evaluate_active_goal,
+                    record_goal_nudge,
+                )
+                _goal_outcome = evaluate_active_goal(ms=_goal_ms, candidate=content or '')
+                if (_goal_outcome.get('action') == ACTION_NUDGE
+                        and _goal_outcome.get('goal')):
+                    # Persist the candidate as an intermediate assistant turn so
+                    # the agent answers the nudge with the full context.
+                    _goal_inj_meta = (
+                        {'reasoning_content': reasoning_text}
+                        if reasoning_text else None)
+                    db.add_chat_message(session_id, 'assistant', content,
+                                        agent_id=db_agent_id, metadata=_goal_inj_meta)
+                    chatlog.append({'type': 'intermediate', 'session_id': session_id,
+                                    'content': content})
+                    _goal_asst_msg: Dict[str, Any] = {'role': 'assistant', 'content': content}
+                    if reasoning_text:
+                        _goal_asst_msg['reasoning_content'] = reasoning_text
+                    messages.append(_goal_asst_msg)
+                    _goal_nudge_msg = record_goal_nudge(
+                        ms=_goal_ms, outcome=_goal_outcome,
+                        session_id=session_id, agent_id=agent_id,
+                        db_agent_id=db_agent_id,
+                    )
+                    if _goal_nudge_msg:
+                        messages.append(_goal_nudge_msg)
+                        continue  # re-enter loop so the agent continues the goal
+                elif _goal_outcome.get('clear'):
+                    clear_active_goal(ms=_goal_ms, session_id=session_id,
+                                      agent_id=agent_id, db_agent_id=db_agent_id)
+
             # Final response — save with timeline metadata
             ms = agent_context.get('agent_state')
+            # Skip the auto-complete guess when the agent reconciled its task
+            # list in response to the bookkeeping reminder — those statuses
+            # are authoritative.
             if (ms is not None and ms.mode == 'execute' and _successful_mutation
-                    and not stop_event.is_set()):
+                    and not stop_event.is_set()
+                    and not (_task_reminder_fired and _explicit_task_update_turn)):
                 completion = ms.completion_eligible(
                     tool_errors=_tool_errors, final_text=content, mutated=True)
                 if completion['eligible']:
@@ -1983,9 +2340,12 @@ def run_tool_loop(agent: Dict[str, Any],
                     'content': _display_content, 'is_final': True,
                     'send_as_message': True,
                 })
-            db.add_chat_message(session_id, 'assistant', _display_content, agent_id=db_agent_id, metadata=meta)
+            message_id = _message_id(db.add_chat_message(
+                session_id, 'assistant', _display_content,
+                agent_id=db_agent_id, metadata=meta,
+            ))
             chatlog.append({'type': 'final', 'session_id': session_id, 'content': _display_content,
-                            'metadata': _cl_meta})
+                            'metadata': _cl_meta, 'message_id': message_id})
             chatlog.append({'type': 'turn_end', 'session_id': session_id, 'thinking_duration': _final_dur})
             # Archive sub-agent session at turn-end — single-turn only. Explorer &
             # kb-organizer are single-shot, so they archive on completion (no need to
@@ -2116,7 +2476,7 @@ def run_tool_loop(agent: Dict[str, Any],
         for tc_idx, tc in enumerate(tool_calls):
             fn_name = tc['function']['name']
             if fn_name == 'update_tasks':
-                _explicit_task_update = True
+                _explicit_task_update_turn = True
 
             # --- Quality Monitor: hallucinated tool check ---
             _qm_hallucinated = _qm_check_hallucinated(
@@ -2188,7 +2548,7 @@ def run_tool_loop(agent: Dict[str, Any],
                     else:
                         _future = _pool.submit(
                             _execute_tool_core, _fn_p, _args_p,
-                            builtin_exec, real_exec)
+                            builtin_exec, real_exec, agent_context)
                         # Record the deadline at submission, not when collection
                         # reaches this call, so ordering cannot extend its budget.
                         _parallel_jobs[p_idx] = (
@@ -2278,7 +2638,15 @@ def run_tool_loop(agent: Dict[str, Any],
                             'blocked_by': 'tool_guard'}
                 else:
                     tool_result = _execute_tool_core(fn_name, args,
-                                                     builtin_exec, real_exec)
+                                                     builtin_exec, real_exec,
+                                                     agent_context)
+
+            # Safety provenance rides out-of-band on the tool result.  Strip it
+            # here, before the result is serialized for the LLM, logged, or shown
+            # to the user; only the timeline/SSE payload may carry it.
+            _safety_info = pop_safety_provenance(tool_result)
+            _approval_info = None
+            _decided_by = None
 
             # Human-in-the-loop approval for requires_approval safety results
             if isinstance(tool_result, dict) and tool_result.get('level') == 'requires_approval':
@@ -2310,7 +2678,7 @@ def run_tool_loop(agent: Dict[str, Any],
                     tool_call_id=_tc['id'],
                     tool_name=fn_name,
                     tool_args=args,
-                    safety_result=tool_result,
+                    safety_result={**tool_result, '_safety': _safety_info},
                 )
 
                 # Persist to DB so reconnecting SSE clients can retrieve
@@ -2340,17 +2708,13 @@ def run_tool_loop(agent: Dict[str, Any],
                     'approval_info': tool_result.get('approval_info', {}),
                     'reasons': tool_result.get('reasons', []),
                     'score': tool_result.get('score'),
+                    'safety': _safety_info or None,
                     'source_agent_name': agent.get('name', agent_id),
                 })
 
                 # Escalation: ensure a human can see the approval.
-                # We always fan-out to BOTH web SSE AND messaging channels,
-                # because has_web_listener() is unreliable — it only checks
-                # listener registration, not actual SSE delivery. If SSE
-                # disconnects and reconnects, the approval event may already
-                # be gone from the ring buffer. Web SSE delivers the approval
-                # modal in the browser; messaging channels deliver a fallback
-                # notification via Telegram/WhatsApp.
+                # Always fan out to BOTH durable web SSE and messaging channels.
+                # Messaging remains the out-of-browser fallback.
                 # List of (session_id, external_user_id, channel_id) that received
                 # approval_required — used to fan-out approval_resolved to all of them.
                 _escalation_targets: list = []
@@ -2366,6 +2730,7 @@ def run_tool_loop(agent: Dict[str, Any],
                         'approval_info': tool_result.get('approval_info', {}),
                         'reasons': tool_result.get('reasons', []),
                         'score': tool_result.get('score'),
+                        'safety': _safety_info or None,
                         'source_agent_id': agent_id,
                         'source_agent_name': agent.get('name', agent_id),
                     }
@@ -2385,31 +2750,8 @@ def run_tool_loop(agent: Dict[str, Any],
                         })
                         _escalation_targets.append((_human_session_id, _web_uid, _web_cid))
 
-                    # Channel (Telegram/WhatsApp): always notify via the super
-                    # agent's messaging channel as a fallback. We no longer gate
-                    # this behind has_web_listener() because the registration
-                    # may exist while the SSE connection is not delivering.
-
-                    # Verify web SSE delivery with heartbeat-aware check.
-                    # has_web_listener() only confirms a callback is registered;
-                    # this confirms the SSE connection is actually sending heartbeats.
-                    _web_sse_active = False
-                    try:
-                        from routes.realtime import has_active_web_sse
-                        _web_sse_active = (
-                            has_active_web_sse(session_id) or
-                            (_human_session_id and has_active_web_sse(_human_session_id))
-                        )
-                    except Exception:
-                        pass  # routes.realtime may not be importable in all contexts
-
-                    if not _web_sse_active:
-                        _logger.info(
-                            "approval %s: web SSE appears inactive for session %s "
-                            "(heartbeat not received within window) — relying on "
-                            "messaging channel fallback",
-                            pending.approval_id, session_id,
-                        )
+                    # Channel (Telegram/WhatsApp) remains an unconditional
+                    # fallback; browser connection liveness is not authoritative.
                     _super = db.get_super_agent()
                     if _super and _super['id'] != agent_id:
                         _su_uid, _su_cid = _resolve_agent_target(_super['id'])
@@ -2428,13 +2770,22 @@ def run_tool_loop(agent: Dict[str, Any],
                 deadline = time.time() + APPROVAL_TIMEOUT
                 while not pending.decision_event.wait(timeout=1.0):
                     if stop_event.is_set():
-                        approval_registry.resolve(pending.approval_id, 'reject')
+                        approval_registry.resolve(pending.approval_id, 'reject',
+                                                  resolved_by='system:stopped')
                         break
                     if time.time() >= deadline:
                         break
 
                 timed_out = pending.decision is None
                 decision = pending.decision or 'reject'
+                # Who actually decided: a human channel, another agent, the stop
+                # signal, or this loop's timeout.  Never inferred from 'decision'.
+                _decided_by = pending.resolved_by or ('timeout' if timed_out else 'unknown')
+                _approval_info = {
+                    'approval_id': pending.approval_id,
+                    'decision': decision,
+                    'decided_by': _decided_by,
+                }
 
                 # Emit approval_resolved BEFORE re-executing the approved tool so the
                 # UI (inline chat card + global modal) collapses the moment the decision
@@ -2447,6 +2798,8 @@ def run_tool_loop(agent: Dict[str, Any],
                     'approval_id': pending.approval_id,
                     'decision': decision,
                     'timed_out': timed_out,
+                    'decided_by': _decided_by,
+                    'safety': _safety_info or None,
                 })
                 # Fan-out to all escalation targets (web + Telegram), deduplicating by (session, channel)
                 for _esc_sid, _esc_uid, _esc_cid in _escalation_targets:
@@ -2459,6 +2812,8 @@ def run_tool_loop(agent: Dict[str, Any],
                         'approval_id': pending.approval_id,
                         'decision': decision,
                         'timed_out': timed_out,
+                        'decided_by': _decided_by,
+                        'safety': _safety_info or None,
                     })
                 approval_registry.remove(pending.approval_id)
                 try:
@@ -2482,6 +2837,12 @@ def run_tool_loop(agent: Dict[str, Any],
                         'level': 'rejected',
                         'original_reasons': pending.safety_result.get('reasons', []),
                     }
+
+                # The post-approval re-execution reports the bypassed ('safe')
+                # verdict; the timeline must keep the original verdict that
+                # triggered the approval request instead.
+                if isinstance(tool_result, dict):
+                    tool_result.pop('_safety', None)
 
             # Track lazy-skill state changes and publish their snapshot only after
             # tool_executed, preserving chat-stream ordering for the browser.
@@ -2682,13 +3043,22 @@ def run_tool_loop(agent: Dict[str, Any],
                                 'tasks:auto_transition', [activated['task_id']])
                     _successful_mutation = True
 
-            timeline.append({"type": "tool_result", "tool": fn_name, "result": result_dict, "error": has_error})
+            _timeline_extra = {}
+            if _safety_info:
+                _timeline_extra['safety'] = _safety_info
+            if _approval_info:
+                _timeline_extra['approval'] = _approval_info
+
+            timeline.append({"type": "tool_result", "tool": fn_name, "result": result_dict,
+                             "error": has_error, **_timeline_extra})
 
             event_stream.emit('tool_executed', {
                 'agent_id': agent_id, 'session_id': session_id,
                 'external_user_id': external_user_id, 'channel_id': channel_id,
                 'tool_name': fn_name, 'tool_args': args,
                 'tool_result': result_dict, 'has_error': has_error,
+                'safety': _safety_info or None,
+                'approval': _approval_info,
             })
 
             from backend.plugin_manager import run_tool_result_gates
@@ -2698,10 +3068,12 @@ def run_tool_loop(agent: Dict[str, Any],
                 # Preserve tool-call/result pairing in durable history, but never
                 # expose the tool result to another LLM call or user-visible reply.
                 db.add_chat_message(session_id, 'tool', result_str,
-                                    tool_call_id=_tc['id'], agent_id=db_agent_id)
+                                    tool_call_id=_tc['id'], agent_id=db_agent_id,
+                                    metadata=dict(_timeline_extra) or None)
                 chatlog.append({'type': 'tool_output', 'session_id': session_id,
                                 'content': result_str, 'tool_call_id': _tc['id'],
-                                'error': has_error, 'function': fn_name})
+                                'error': has_error, 'function': fn_name,
+                                **_timeline_extra})
                 tool_trace.append({"tool": fn_name, "args": args, "result": result_dict})
                 return _finalize_gate_response(
                     str(_result_decision.get('response') or ''), 'tool_result')
@@ -2738,11 +3110,14 @@ def run_tool_loop(agent: Dict[str, Any],
 
             # --- Split-path output ---
             # DB gets FULL result_str (for detail view and future re-read)
-            db.add_chat_message(session_id, 'tool', result_str, tool_call_id=_tc['id'], agent_id=db_agent_id)
-            # Chatlog gets FULL content for tool_output display
+            db.add_chat_message(session_id, 'tool', result_str, tool_call_id=_tc['id'],
+                                agent_id=db_agent_id,
+                                metadata=dict(_timeline_extra) or None)
+            # Chatlog gets FULL content for tool_output display, plus the safety
+            # provenance so the timeline badge survives a reload/replay.
             chatlog.append({'type': 'tool_output', 'session_id': session_id,
                             'content': result_str, 'tool_call_id': _tc['id'], 'error': has_error,
-                            'function': fn_name})
+                            'function': fn_name, **_timeline_extra})
             # LLM messages get COMPRESSED content (token savings)
             messages.append({
                 "role": "tool",
@@ -2812,10 +3187,14 @@ def run_tool_loop(agent: Dict[str, Any],
             _logger.info("Stop signal received for session %s — aborting after tools", session_id)
             stop_msg = "Agent stopped by user request."
             _stopb_dur = round(time.time() - _loop_start_time, 1)
-            db.add_chat_message(session_id, 'assistant', stop_msg, agent_id=db_agent_id,
-                                metadata={"timeline": timeline, "stopped": True, "thinking_duration": _stopb_dur})
+            message_id = _message_id(db.add_chat_message(
+                session_id, 'assistant', stop_msg, agent_id=db_agent_id,
+                metadata={"timeline": timeline, "stopped": True,
+                          "thinking_duration": _stopb_dur},
+            ))
             chatlog.append({'type': 'final', 'session_id': session_id, 'content': stop_msg,
-                            'metadata': {'stopped': True, 'thinking_duration': _stopb_dur}})
+                            'metadata': {'stopped': True, 'thinking_duration': _stopb_dur},
+                            'message_id': message_id})
             _stopb_inj = ("[SYSTEM] Your previous reasoning and response were forcefully "
                           "interrupted by the user via /stop before completion. "
                           "Await the user's next instruction.")

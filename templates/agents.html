@@ -1,90 +1,131 @@
 {% extends "base.html" %}
 
 {% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/ag-ui.css') }}?v=5">
 <div class="p-4 md:p-6">
     <!-- Header -->
-    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
+    <div class="ag-head flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
         <div class="flex-1 w-full sm:w-auto">
             <h2 class="text-2xl font-bold text-gray-800 dark:text-gray-100">Agents</h2>
-            <p class="text-sm text-gray-500 mt-1">Manage AI agents with custom prompts, tools, and channels</p>
+            <p class="ag-sub text-sm text-gray-500 mt-1">Manage AI agents with custom prompts, tools, and channels</p>
         </div>
     </div>
 
     <!-- Tab Navigation -->
-    <div id="tabNav" class="flex border-b border-gray-200 dark:border-gray-700 mb-5">
-        <button id="tabBtnAgents" class="px-5 py-2.5 text-sm font-medium text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-600 dark:border-indigo-400 -mb-px transition-colors" onclick="switchTab('agents')">
-            Agents
-        </button>
-        <button id="tabBtnWorkplaces" class="px-5 py-2.5 text-sm font-medium text-gray-500 dark:text-gray-400 border-b-2 border-transparent hover:text-gray-700 dark:hover:text-gray-300 transition-colors" onclick="switchTab('workplaces')">
-            Workplaces
-        </button>
+    <div id="tabNav" class="ag-tabs" role="tablist">
+        <button id="tabBtnAgents" data-shortcut="1" data-shortcut-hint="off" data-shortcut-label="Go to agents" class="ag-tab is-active" role="tab" onclick="switchTab('agents')"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>Agents</button>
+        <button id="tabBtnWorkplaces" data-shortcut="2" data-shortcut-hint="off" data-shortcut-label="Go to workplaces" class="ag-tab" role="tab" onclick="switchTab('workplaces')"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="8" x="2" y="2" rx="2" ry="2"/><rect width="20" height="8" x="2" y="14" rx="2" ry="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/></svg>Workplaces</button>
+        <button id="tabBtnTemplates" data-shortcut="3" data-shortcut-hint="off" data-shortcut-label="Go to templates" class="ag-tab" role="tab" onclick="switchTab('templates')"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="7" x="3" y="3" rx="1"/><rect width="9" height="7" x="3" y="14" rx="1"/><rect width="5" height="7" x="16" y="14" rx="1"/></svg>Templates</button>
     </div>
 
     <!-- ========== AGENTS TAB ========== -->
     <div id="tab-agents">
-        <div class="flex flex-col sm:flex-row gap-3 mb-6">
-            <div class="relative">
-                <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-                <input type="search" id="agent-search" name="agent_search_filter" placeholder="Search agents..." oninput="filterAgents()" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')"
-                       class="w-full sm:w-64 pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10">
+        <div class="ag-toolbar flex flex-col sm:flex-row gap-3 mb-6">
+            <div class="ag-search-wrap relative">
+                <svg class="ag-search-ico" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                <input type="search" id="agent-search" data-shortcut="/,mod+k" data-shortcut-label="Search agents" name="agent_search_filter" placeholder="Search agents..." oninput="filterAgents()" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')"
+                       class="ag-search">
+            </div>
+            <div class="ag-view" role="group" aria-label="Agents layout">
+                <button type="button" class="ag-view-btn" data-view="grid" title="Grid view" aria-label="Grid view" aria-pressed="true" onclick="setAgentsView('grid')">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg>
+                </button>
+                <button type="button" class="ag-view-btn" data-view="list" title="List view" aria-label="List view" aria-pressed="false" onclick="setAgentsView('list')">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg>
+                </button>
             </div>
             <button onclick="showCreateAgentModal()"
-                    class="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2">
+                    class="ag-btn ag-btn-primary" title="New Agent" aria-label="New Agent" data-shortcut="n" data-shortcut-label="New agent">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-                New Agent
+                <span class="ag-btn-label">New Agent</span>
             </button>
             <button onclick="showImportAgentModal()"
-                    class="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2">
+                    class="ag-btn ag-btn-ghost" title="Import Agent" aria-label="Import Agent" data-shortcut="i" data-shortcut-label="Import agent">
                 <i data-lucide="upload" class="w-4 h-4"></i>
-                Import Agent
+                <span class="ag-btn-label">Import Agent</span>
             </button>
         </div>
 
         <!-- Agents Grid -->
-        <div id="agents-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+        <div id="agents-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             <!-- Populated by JS -->
         </div>
 
-        <div id="agents-empty" class="hidden text-center py-16 text-gray-400">
-            <svg class="w-16 h-16 mx-auto mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
-            <p class="text-lg font-medium">No agents yet</p>
-            <p class="text-sm mt-1">Create your first agent to get started.</p>
+        <div id="agents-empty" class="hidden ag-empty">
+            <span class="ag-empty-ic"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/></svg></span>
+            <p class="ag-empty-t">No agents yet</p>
+            <p class="ag-empty-s">Create your first agent to get started.</p>
+            <button type="button" onclick="showCreateAgentModal()" class="ag-btn ag-btn-primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg><span>New Agent</span></button>
         </div>
 
         <!-- Disabled Agents (collapsible, collapsed by default) -->
         <div id="disabled-agents-section" class="hidden mt-8">
-            <button onclick="toggleDisabledAgents()" class="flex items-center gap-2 w-full text-left px-4 py-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700/50 transition-colors">
-                <svg id="disabled-chevron" class="w-4 h-4 text-gray-400 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
-                </svg>
-                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">Disabled Agents</span>
-                <span id="disabled-count" class="text-xs text-gray-400 dark:text-gray-500 ml-1"></span>
+            <button onclick="toggleDisabledAgents()" class="ag-disabled-bar" aria-controls="disabled-agents-grid">
+                <svg id="disabled-chevron" class="ag-disabled-chev" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+                <span class="ag-disabled-label">Disabled Agents</span>
+                <span id="disabled-count" class="ag-disabled-count"></span>
             </button>
-            <div id="disabled-agents-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 mt-3 hidden"></div>
+            <div id="disabled-agents-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mt-4 hidden"></div>
         </div>
     </div>
 
     <!-- ========== WORKPLACES TAB ========== -->
     <div id="tab-workplaces" class="hidden">
-        <div class="flex flex-col sm:flex-row gap-3 mb-6">
-            <div class="relative">
-                <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-                <input type="search" id="workplace-search" name="workplace_search_filter" placeholder="Search workplaces..." oninput="filterWorkplaces()" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')"
-                       class="w-full sm:w-64 pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10">
+        <div class="ag-toolbar flex flex-col sm:flex-row gap-3 mb-6">
+            <div class="ag-search-wrap relative">
+                <svg class="ag-search-ico" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                <input type="search" id="workplace-search" data-shortcut="/,mod+k" data-shortcut-label="Search workplaces" name="workplace_search_filter" placeholder="Search workplaces..." oninput="filterWorkplaces()" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')"
+                       class="ag-search">
             </div>
             <button onclick="showCreateWorkplaceModal()"
-                    class="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2">
+                    class="ag-btn ag-btn-primary" title="New Workplace" aria-label="New Workplace" data-shortcut="n" data-shortcut-label="New workplace">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-                New Workplace
+                <span class="ag-btn-label">New Workplace</span>
             </button>
         </div>
 
         <!-- Workplaces Grid -->
         <div id="workplaces-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
-        <div id="workplaces-empty" class="hidden text-center py-16 text-gray-400">
-            <svg class="w-16 h-16 mx-auto mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
-            <p class="text-lg font-medium">No workplaces yet</p>
-            <p class="text-sm mt-1">Create a workplace to assign execution environments to your agents.</p>
+        <div id="workplaces-more" class="hidden mt-6 flex flex-col items-center gap-2">
+            <button type="button" onclick="showMoreWorkplaces()" class="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">Show more</button>
+            <p data-more-count class="text-xs text-gray-400"></p>
+        </div>
+        <div id="workplaces-empty" class="hidden ag-empty">
+            <span class="ag-empty-ic"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg></span>
+            <p class="ag-empty-t">No workplaces yet</p>
+            <p class="ag-empty-s">Create a workplace to assign execution environments to your agents.</p>
+            <button type="button" onclick="showCreateWorkplaceModal()" class="ag-btn ag-btn-primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg><span>New Workplace</span></button>
+        </div>
+    </div>
+
+    <!-- ========== TEMPLATES TAB ========== -->
+    <div id="tab-templates" class="hidden">
+        <div class="ag-toolbar flex flex-col sm:flex-row gap-3 mb-6">
+            <div class="ag-search-wrap relative">
+                <svg class="ag-search-ico" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                <input type="search" id="template-search" data-shortcut="/,mod+k" data-shortcut-label="Search templates" name="template_search_filter" placeholder="Search templates..." oninput="filterTemplates()" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')"
+                       class="ag-search">
+            </div>
+
+            <button type="button" onclick="loadTemplates(true)" class="ag-btn ag-btn-ghost" title="Refresh" aria-label="Refresh" data-shortcut="r" data-shortcut-label="Refresh templates">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
+                <span class="ag-btn-label">Refresh</span>
+            </button>
+            <a href="/template/new" id="template-new-btn" class="ag-btn ag-btn-primary" title="New template" aria-label="New template" data-shortcut="n" data-shortcut-label="New template">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+                <span class="ag-btn-label">New template</span>
+            </a>
+        </div>
+
+        <div id="templates-collisions" class="hidden mb-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-200"></div>
+
+        <div id="templates-loading" class="hidden text-center py-12 text-gray-400 text-sm">Loading templates&hellip;</div>
+        <div id="templates-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+        <div id="templates-empty" class="hidden ag-empty">
+            <span class="ag-empty-ic"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg></span>
+            <p class="ag-empty-t">No templates available</p>
+            <p class="ag-empty-s">Templates let you create pre-configured agents in a few clicks.</p>
+            <a href="/template/new" class="ag-btn ag-btn-primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg><span>New template</span></a>
         </div>
     </div>
 </div>
@@ -92,34 +133,27 @@
 <!-- Create Agent Modal -->
 <div id="create-agent-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
     <div class="absolute inset-0 bg-black/50" onclick="closeCreateAgentModal()"></div>
-    <div class="relative bg-white dark:bg-gray-800 rounded-xl w-[90%] max-w-[450px] shadow-xl">
+    <div class="relative ev-modal w-[90%] max-w-[450px] shadow-xl">
         <div class="p-6">
-            <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">New Agent</h3>
+            <h3 class="ev-modal-t">New Agent</h3>
+            <p class="ev-modal-s">Fill in the basics to create a blank agent. Prefer a ready-made setup? Use the Templates tab.</p>
             <div class="mb-4">
-                <label class="block mb-1 text-gray-700 dark:text-gray-300 text-sm font-medium">Create from Skillset</label>
-                <select id="new-agent-skillset" onchange="applySkillsetToForm()"
-                        class="w-full p-2.5 border border-gray-300 rounded-md text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10">
-                    <option value="">-- None (blank agent) --</option>
-                </select>
-                <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">Choose a template to auto-fill agent settings</p>
-            </div>
-            <div class="mb-4">
-                <label class="block mb-1 text-gray-700 dark:text-gray-300 text-sm font-medium">Agent ID *</label>
+                <label class="block mb-1 text-gray-700 dark:text-gray-300 text-sm font-medium" for="new-agent-id">Agent ID <span class="ev-req" aria-hidden="true">*</span></label>
                 <input type="text" id="new-agent-id" placeholder="e.g., customer_service" class="w-full p-2.5 border border-gray-300 rounded-md text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10">
                 <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">Alphanumeric and underscores only</p>
             </div>
             <div class="mb-4">
-                <label class="block mb-1 text-gray-700 dark:text-gray-300 text-sm font-medium">Name *</label>
+                <label class="block mb-1 text-gray-700 dark:text-gray-300 text-sm font-medium" for="new-agent-name">Name <span class="ev-req" aria-hidden="true">*</span></label>
                 <input type="text" id="new-agent-name" placeholder="e.g., Customer Service" class="w-full p-2.5 border border-gray-300 rounded-md text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10">
             </div>
             <div class="mb-4">
-                <label class="block mb-1 text-gray-700 dark:text-gray-300 text-sm font-medium">Description</label>
+                <label class="block mb-1 text-gray-700 dark:text-gray-300 text-sm font-medium" for="new-agent-desc">Description</label>
                 <textarea id="new-agent-desc" rows="2" placeholder="Short description" class="w-full p-2.5 border border-gray-300 rounded-md text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/10"></textarea>
             </div>
         </div>
-        <div class="flex gap-3 justify-end px-6 pb-5">
-            <button onclick="closeCreateAgentModal()" class="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">Cancel</button>
-            <button onclick="createAgent()" class="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded-md text-sm font-medium transition-colors">Create</button>
+        <div class="ev-modal-btns px-6 pb-6">
+            <button onclick="closeCreateAgentModal()" class="ev-btn">Cancel</button>
+            <button onclick="createAgent()" class="ev-btn ev-btn-primary">Create</button>
         </div>
     </div>
 </div>
@@ -127,23 +161,24 @@
 <!-- Import Agent Modal -->
 <div id="import-agent-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
     <div class="absolute inset-0 bg-black/50" onclick="closeImportAgentModal()"></div>
-    <div class="relative bg-white dark:bg-gray-800 rounded-xl w-[92%] max-w-xl shadow-xl">
+    <div class="relative ev-modal w-[92%] max-w-xl shadow-xl">
         <div class="p-6">
-            <div class="flex items-center justify-between mb-4">
-                <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Import Agent</h3>
-                <button onclick="closeImportAgentModal()" title="Close" class="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded"><i data-lucide="x" class="w-5 h-5"></i></button>
+            <div class="flex items-start justify-between mb-4">
+                <div><h3 class="ev-modal-t">Import Agent</h3><p class="ev-modal-s" style="margin-bottom:0">Bring in an agent exported from another Evonic.</p></div>
+                <button onclick="closeImportAgentModal()" title="Close" aria-label="Close" class="ev-x"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
             </div>
-            <div class="flex border-b border-gray-200 dark:border-gray-700 mb-4" role="tablist">
-                <button id="import-file-tab" onclick="setImportMode('file')" class="px-4 py-2 text-sm font-medium text-indigo-600 border-b-2 border-indigo-600">File</button>
-                <button id="import-paste-tab" onclick="setImportMode('paste')" class="px-4 py-2 text-sm font-medium text-gray-500 border-b-2 border-transparent">Paste JSON</button>
+            <div class="ev-seg mb-4" role="tablist">
+                <button id="import-file-tab" onclick="setImportMode('file')" class="ev-seg-btn is-active" role="tab">File</button>
+                <button id="import-paste-tab" onclick="setImportMode('paste')" class="ev-seg-btn" role="tab">Paste JSON</button>
             </div>
             <div id="import-file-panel">
                 <input id="import-agent-file" type="file" accept="application/json,.json" class="hidden" onchange="selectImportFile(this.files[0])">
                 <button id="import-drop-zone" type="button" onclick="document.getElementById('import-agent-file').click()"
                         ondragover="handleImportDrag(event)" ondragleave="handleImportDrag(event)" ondrop="handleImportDrop(event)"
-                        class="w-full min-h-32 border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg flex flex-col items-center justify-center gap-2 text-gray-500 dark:text-gray-400 hover:border-indigo-400 hover:text-indigo-600 transition-colors">
-                    <i data-lucide="file-json" class="w-7 h-7"></i>
-                    <span id="import-file-label" class="text-sm font-medium">Choose or drop a JSON file</span>
+                        class="sk-drop" style="width:100%">
+                    <span class="ag-empty-ic" style="width:2.75rem;height:2.75rem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 12a1 1 0 0 0-1 1v1a1 1 0 0 1-1 1 1 1 0 0 1 1 1v1a1 1 0 0 0 1 1"/><path d="M14 18a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1 1 1 0 0 1-1-1v-1a1 1 0 0 0-1-1"/></svg></span>
+                    <span id="import-file-label" class="sk-drop-t">Choose or drop a JSON file</span>
+                    <span class="sk-drop-f">Exported agent .json</span>
                 </button>
             </div>
             <div id="import-paste-panel" class="hidden">
@@ -167,8 +202,70 @@
             <div id="import-agent-warning" class="hidden mt-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-200"></div>
         </div>
         <div class="flex gap-3 justify-end px-6 pb-5">
-            <button onclick="closeImportAgentModal()" class="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700">Cancel</button>
-            <button id="import-agent-submit" onclick="importAgent()" class="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 disabled:opacity-50 text-white rounded-md text-sm font-medium">Import</button>
+            <button onclick="closeImportAgentModal()" class="ev-btn">Cancel</button>
+            <button id="import-agent-submit" onclick="importAgent()" class="ev-btn ev-btn-primary">Import</button>
+        </div>
+    </div>
+</div>
+
+<!-- Template Preview Modal -->
+<div id="template-preview-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
+    <div class="absolute inset-0 bg-black/50" onclick="closeTemplatePreview()"></div>
+    <div class="relative ev-modal w-[92%] max-w-2xl shadow-xl max-h-[88vh] flex flex-col">
+        <div class="flex items-center justify-between p-5 border-b border-gray-200 dark:border-gray-700">
+            <h3 id="tpl-preview-title" class="text-lg font-semibold text-gray-900 dark:text-gray-100">Template</h3>
+            <button onclick="closeTemplatePreview()" title="Close" class="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded"><i data-lucide="x" class="w-5 h-5"></i></button>
+        </div>
+        <div id="tpl-preview-body" class="p-5 overflow-y-auto text-sm text-gray-700 dark:text-gray-300"></div>
+        <div class="flex gap-3 justify-end px-5 py-4 border-t border-gray-200 dark:border-gray-700">
+            <a id="tpl-preview-edit" href="#" class="ev-btn">Edit template</a>
+            <button onclick="createFromPreviewedTemplate()" class="ev-btn ev-btn-primary">Create Agent from this</button>
+        </div>
+    </div>
+</div>
+
+<!-- Create Agent from Template Modal -->
+<div id="template-create-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
+    <div class="absolute inset-0 bg-black/50" onclick="closeTemplateCreate()"></div>
+    <div class="relative ev-modal w-[94%] max-w-3xl shadow-xl max-h-[90vh] flex flex-col">
+        <div class="flex items-center justify-between p-5 border-b border-gray-200 dark:border-gray-700">
+            <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Create Agent from <span id="tpl-create-name"></span></h3>
+            <button onclick="closeTemplateCreate()" title="Close" class="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded"><i data-lucide="x" class="w-5 h-5"></i></button>
+        </div>
+        <div class="p-5 overflow-y-auto text-sm flex-1">
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-3">
+                <div>
+                    <label class="block mb-1 text-gray-700 dark:text-gray-300 text-sm font-medium">Agent ID</label>
+                    <input type="text" id="tpl-agent-id" placeholder="auto (derived from name)" autocapitalize="none" spellcheck="false"
+                           class="w-full p-2.5 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md text-sm focus:border-indigo-500 focus:outline-none">
+                    <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">Lowercase letters, numbers and underscores. Leave blank to auto-derive.</p>
+                </div>
+                <div>
+                    <label class="block mb-1 text-gray-700 dark:text-gray-300 text-sm font-medium">Name</label>
+                    <input type="text" id="tpl-agent-name" placeholder="Name" class="w-full p-2.5 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md text-sm focus:border-indigo-500 focus:outline-none">
+                </div>
+            </div>
+
+            <div id="tpl-params-section" class="mb-4">
+                <h4 class="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-2">Parameters</h4>
+                <div id="tpl-param-fields" class="grid grid-cols-1 sm:grid-cols-2 gap-3"></div>
+            </div>
+
+            <p id="tpl-render-warnings" class="hidden mb-3 rounded-md border border-amber-300 bg-amber-50 p-2.5 text-xs text-amber-800 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-200"></p>
+
+            <div class="mb-4">
+                <h4 class="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-2">Resolved configuration</h4>
+                <div id="tpl-resolved-summary" class="rounded-md border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/40 p-3 text-xs text-gray-600 dark:text-gray-300"></div>
+            </div>
+
+            <div>
+                <h4 class="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-2">System prompt preview</h4>
+                <pre id="tpl-prompt-preview" class="rounded-md border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/40 p-3 text-xs whitespace-pre-wrap break-words max-h-56 overflow-y-auto text-gray-700 dark:text-gray-200">(loading&hellip;)</pre>
+            </div>
+        </div>
+        <div class="flex gap-3 justify-end px-5 py-4 border-t border-gray-200 dark:border-gray-700">
+            <button onclick="closeTemplateCreate()" class="ev-btn">Cancel</button>
+            <button id="tpl-create-submit" onclick="submitTemplateCreate()" class="ev-btn ev-btn-primary">Create Agent</button>
         </div>
     </div>
 </div>
@@ -176,8 +273,9 @@
 <!-- Create Workplace Modal -->
 <div id="create-workplace-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
     <div class="absolute inset-0 bg-black/50" onclick="closeCreateWorkplaceModal()"></div>
-    <div class="relative bg-white dark:bg-gray-800 rounded-xl w-[90%] max-w-md shadow-xl p-6">
-        <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">New Workplace</h3>
+    <div class="relative ev-modal w-[90%] max-w-md shadow-xl p-6">
+        <h3 class="ev-modal-t">New Workplace</h3>
+        <p class="ev-modal-s">An execution environment your agents can run in.</p>
         <div class="mb-4">
             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Name *</label>
             <input id="new-workplace-name" type="text" placeholder="e.g., My Server"
@@ -257,68 +355,50 @@
         </div>
 
         <div class="flex gap-3 justify-end mt-4">
-            <button onclick="closeCreateWorkplaceModal()" class="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">Cancel</button>
-            <button onclick="createWorkplace()" class="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded-md text-sm font-medium transition-colors">Create</button>
+            <button onclick="closeCreateWorkplaceModal()" class="ev-btn">Cancel</button>
+            <button onclick="createWorkplace()" class="ev-btn ev-btn-primary">Create</button>
         </div>
     </div>
 </div>
 
-<div id="toast-container" class="fixed bottom-4 right-4 z-50 flex flex-col gap-2"></div>
 
 <script>
 // ===================== TAB SWITCHING =====================
 
 let currentTab = 'agents';
 
+const TAB_BTN_ACTIVE = 'ag-tab is-active';
+const TAB_BTN_IDLE = 'ag-tab';
+
 function switchTab(tab) {
     currentTab = tab;
-    const tabAgents = document.getElementById('tab-agents');
-    const tabWorkplaces = document.getElementById('tab-workplaces');
-    const btnAgents = document.getElementById('tabBtnAgents');
-    const btnWorkplaces = document.getElementById('tabBtnWorkplaces');
-
-    if (tab === 'agents') {
-        tabAgents.classList.remove('hidden');
-        tabWorkplaces.classList.add('hidden');
-        btnAgents.className = 'px-5 py-2.5 text-sm font-medium text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-600 dark:border-indigo-400 -mb-px transition-colors';
-        btnWorkplaces.className = 'px-5 py-2.5 text-sm font-medium text-gray-500 dark:text-gray-400 border-b-2 border-transparent hover:text-gray-700 dark:hover:text-gray-300 transition-colors';
-    } else {
-        tabAgents.classList.add('hidden');
-        tabWorkplaces.classList.remove('hidden');
-        btnAgents.className = 'px-5 py-2.5 text-sm font-medium text-gray-500 dark:text-gray-400 border-b-2 border-transparent hover:text-gray-700 dark:hover:text-gray-300 transition-colors';
-        btnWorkplaces.className = 'px-5 py-2.5 text-sm font-medium text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-600 dark:border-indigo-400 -mb-px transition-colors';
-        if (!workplacesLoaded) loadWorkplaces();
+    const registry = {
+        agents: ['tab-agents', 'tabBtnAgents'],
+        workplaces: ['tab-workplaces', 'tabBtnWorkplaces'],
+        templates: ['tab-templates', 'tabBtnTemplates'],
+    };
+    for (const name of Object.keys(registry)) {
+        const [panelId, btnId] = registry[name];
+        const panel = document.getElementById(panelId);
+        const btn = document.getElementById(btnId);
+        if (!panel || !btn) continue;
+        if (name === tab) {
+            panel.classList.remove('hidden');
+            btn.className = TAB_BTN_ACTIVE;
+        } else {
+            panel.classList.add('hidden');
+            btn.className = TAB_BTN_IDLE;
+        }
     }
+    if (tab === 'workplaces' && !workplacesLoaded) loadWorkplaces();
+    if (tab === 'templates' && !templatesLoaded) loadTemplates();
 }
 
 // ===================== AGENTS =====================
 
 let agents = [];
-let skillsets = [];
 let busyAgents = {};
 let agentStatusEventsSubscribed = false;
-
-async function loadSkillsets() {
-    try {
-        const res = await fetch('/api/skillsets');
-        const data = await res.json();
-        skillsets = data.skillsets || [];
-        const select = document.getElementById('new-agent-skillset');
-        select.innerHTML = '<option value="">-- None (blank agent) --</option>' +
-            skillsets.map(s => `<option value="${esc(s.id)}">${esc(s.name || s.id)} — ${esc((s.description || '').substring(0, 50))}</option>`).join('');
-    } catch (e) {
-        console.error('Failed to load skillsets:', e);
-    }
-}
-
-function applySkillsetToForm() {
-    const skillId = document.getElementById('new-agent-skillset').value;
-    if (!skillId) return;
-    const skillset = skillsets.find(s => s.id === skillId);
-    if (!skillset) return;
-    document.getElementById('new-agent-name').value = skillset.name || '';
-    document.getElementById('new-agent-desc').value = skillset.description || '';
-}
 
 async function loadBusyAgents() {
     try {
@@ -336,10 +416,26 @@ async function loadAgents() {
     const data = await res.json();
     agents = data.agents || [];
     renderAgents();
-    loadSkillsets();
     loadBusyAgents();
     subscribeAgentStatusEvents();
 }
+
+let agentsView = 'grid';
+try { agentsView = localStorage.getItem('agentsView') === 'list' ? 'list' : 'grid'; } catch (e) {}
+function syncAgentsViewButtons() {
+    document.querySelectorAll('.ag-view-btn').forEach(function (b) {
+        const on = b.dataset.view === agentsView;
+        b.classList.toggle('is-active', on);
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+}
+function setAgentsView(v) {
+    agentsView = v === 'list' ? 'list' : 'grid';
+    try { localStorage.setItem('agentsView', agentsView); } catch (e) {}
+    syncAgentsViewButtons();
+    renderAgents();
+}
+document.addEventListener('DOMContentLoaded', syncAgentsViewButtons);
 
 function renderAgents() {
     const grid = document.getElementById('agents-grid');
@@ -389,10 +485,11 @@ function renderAgents() {
         const toggleSwitch = a.is_super
             ? ''
             : mkToggle({ checked: enabled, onChange: `toggleAgent('${a.id}', this.checked)`, extraClass: 'flex-shrink-0' });
+        // "Off" pill with a proper power icon (the old path was malformed and rendered as a clipped, off-centre arc)
         const statusBadge = enabled
             ? ''
-            : `<span class="inline-flex items-center gap-1 text-xs font-medium text-gray-400 dark:text-gray-500 bg-gray-100 dark:bg-gray-700/50 px-2 py-1 rounded-full">
-                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l-2 2m7-7a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            : `<span class="inline-flex items-center gap-1.5 text-xs font-medium text-gray-500 dark:text-gray-300 bg-gray-100 dark:bg-gray-700/60 px-2.5 py-1 rounded-full">
+                    <svg class="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.77.04"/></svg>
                     Off
                </span>`;
         const busyBadge = busyAgents[a.id]
@@ -407,48 +504,78 @@ function renderAgents() {
               (waInfo.status === 'qr_pending' ? 'QR Pending' : 'WA Disconnected') +
               '</span>'
             : '';
-        const settingsBtn = `<a href="/agents/${a.id}#general" class="text-gray-400 dark:text-gray-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-gray-100 dark:hover:bg-gray-700 p-1 rounded transition-colors" title="Settings">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
-                </a>`;
-        const avatarUrl = `/api/agents/${a.id}/avatar?size=small`;
-        const initial = (a.name || a.id || '?').charAt(0).toUpperCase();
-        const hasCustomAvatar = a.avatar_path && a.avatar_path.trim() !== '';
-        const avatarHtml = hasCustomAvatar
-            ? `<img src="${avatarUrl}" alt="${esc(a.name || a.id)}" class="w-8 h-8 rounded-full object-cover flex-shrink-0 bg-indigo-50 dark:bg-indigo-900/20">`
-            : `<div class="w-8 h-8 rounded-full flex-shrink-0 bg-indigo-100 dark:bg-indigo-900/40 flex items-center justify-center text-sm font-bold text-indigo-600 dark:text-indigo-300">${initial}</div>`;
+        // The avatar route returns the uploaded image, or a name-based generated one
+        const avatarHtml = `<img src="/api/agents/${encodeURIComponent(a.id)}/avatar?size=small" alt="" loading="lazy" class="ag-avatar">`;
+        const openAgent = `window.location.href='/agents/${encodeURIComponent(a.id)}'`;
         return `
-        <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-100 dark:border-gray-700 hover:shadow-md transition-shadow overflow-hidden" data-agent-id="${esc(a.id)}">
-            <div class="p-3">
-                <div class="flex items-start gap-2">
-                    ${avatarHtml}
-                    <div class="flex-1 min-w-0 cursor-pointer" onclick="window.location.href='/agents/${a.id}'">
-                        <div class="flex items-center gap-2 flex-wrap" data-badges="${esc(a.id)}">
-                            <h3 class="font-semibold text-sm ${a.is_super ? 'text-red-600 dark:text-red-400' : 'text-gray-800 dark:text-gray-100'} truncate">${esc(a.name || a.id)}${superBadge}</h3>
-                            ${statusBadge}
-                            ${busyBadge}
-                            ${waBadge}
+        <div class="ag-card ${enabled ? '' : 'is-off'} ${a.is_super ? 'is-super' : ''}" data-agent-id="${esc(a.id)}" role="link" tabindex="0" aria-label="Open ${esc(a.name || a.id)}"
+             onclick="if(!event.target.closest('.ag-actions')) ${openAgent}"
+             onkeydown="if((event.key==='Enter'||event.key===' ') && !event.target.closest('.ag-actions')){event.preventDefault();${openAgent}}">
+            <div class="ag-card-top">
+                ${avatarHtml}
+                <div class="ag-title">
+                    <div class="ag-name-row"><h3 class="ag-name">${esc(a.name || a.id)}</h3>${a.is_super ? '<svg class="ag-star" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-label="Super agent"><path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"/></svg>' : ''}</div>
+                    <div class="ag-id" title="Agent ID"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" x2="20" y1="9" y2="9"/><line x1="4" x2="20" y1="15" y2="15"/><line x1="10" x2="8" y1="3" y2="21"/><line x1="16" x2="14" y1="3" y2="21"/></svg>${esc(a.id)}</div>
+                </div>
+                <div class="ag-actions">
+                    <a href="/agents/${encodeURIComponent(a.id)}#general" class="ag-icon-btn" title="Settings" aria-label="Settings"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></a>
+                    ${toggleSwitch}
+                </div>
+            </div>
+            <div class="ag-badges" data-badges="${esc(a.id)}">${statusBadge}${busyBadge}${waBadge}</div>
+            <p class="ag-desc">${esc(a.description || 'No description')}</p>
+        </div>`;
+    };
+
+    // WhatsApp-style contact row: avatar · name (+ status on the right) · description (+ badges and actions on the right)
+    const renderRow = (a) => {
+        const enabled = a.enabled !== false && a.enabled !== 0;
+        const busy = !!busyAgents[a.id];
+        const toggleSwitch = a.is_super ? '' : mkToggle({ checked: enabled, onChange: `toggleAgent('${a.id}', this.checked)`, extraClass: 'flex-shrink-0' });
+        const waInfo = (window._waDisconnectedAgents || []).find(function (x) { return x.id === a.id; });
+        const badges =
+            (busy ? `<span class="busy-badge inline-flex items-center gap-1 text-xs font-medium text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/30 px-2 py-1 rounded-full"><span class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span> Busy</span>` : '') +
+            (waInfo ? '<span class="inline-flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/40 px-2 py-1 rounded-full">' + (waInfo.status === 'qr_pending' ? 'QR Pending' : 'WA Disconnected') + '</span>' : '');
+        const star = a.is_super ? '<svg class="ag-star" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-label="Super agent"><path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"/></svg>' : '';
+        const openAgent = `window.location.href='/agents/${encodeURIComponent(a.id)}'`;
+        return `
+        <div class="ag-row ${enabled ? '' : 'is-off'} ${a.is_super ? 'is-super' : ''}" data-agent-id="${esc(a.id)}" role="link" tabindex="0" title="${esc(a.id)}" aria-label="Open ${esc(a.name || a.id)}"
+             onclick="if(!event.target.closest('.ag-actions')) ${openAgent}"
+             onkeydown="if((event.key==='Enter'||event.key===' ') && !event.target.closest('.ag-actions')){event.preventDefault();${openAgent}}">
+            <img src="/api/agents/${encodeURIComponent(a.id)}/avatar?size=small" alt="" loading="lazy" class="ag-row-avatar">
+            <div class="ag-row-main">
+                <div class="ag-row-top">
+                    <h3 class="ag-row-name"><span>${esc(a.name || a.id)}</span>${star}</h3>
+                    <span class="ag-row-meta ${enabled ? 'is-on' : ''}">${enabled ? 'Active' : 'Off'}</span>
+                </div>
+                <div class="ag-row-bottom">
+                    <p class="ag-row-desc">${esc(a.description || 'No description')}</p>
+                    <div class="ag-row-right">
+                        <div class="ag-row-badges" data-badges="${esc(a.id)}">${badges}</div>
+                        <div class="ag-actions">
+                            <a href="/agents/${encodeURIComponent(a.id)}#general" class="ag-icon-btn" title="Settings" aria-label="Settings"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></a>
+                            ${toggleSwitch}
                         </div>
-                        <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">ID: ${esc(a.id)}</p>
-                        <p class="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 mt-1">${esc(a.description || 'No description')}</p>
-                    </div>
-                    <div class="flex items-center gap-1 flex-shrink-0 mt-1">
-                        ${settingsBtn}
-                        ${toggleSwitch}
                     </div>
                 </div>
             </div>
         </div>`;
     };
 
-    grid.innerHTML = enabledAgents.map(a => renderCard(a)).join('');
+    const listMode = agentsView === 'list';
+    const GRID_CLS = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4';
+    grid.className = listMode ? 'ag-list' : GRID_CLS;
+    disabledGrid.className = (listMode ? 'ag-list' : GRID_CLS) + ' mt-4' + (disabledGrid.classList.contains('hidden') ? ' hidden' : '');
+    const renderItem = listMode ? renderRow : renderCard;
+    grid.innerHTML = enabledAgents.map(a => renderItem(a)).join('');
 
     // Show/hide disabled section
     if (disabledAgents.length === 0) {
         disabledSection.classList.add('hidden');
     } else {
         disabledSection.classList.remove('hidden');
-        disabledCount.textContent = `(${disabledAgents.length})`;
-        disabledGrid.innerHTML = disabledAgents.map(a => renderCard(a)).join('');
+        disabledCount.textContent = String(disabledAgents.length);
+        disabledGrid.innerHTML = disabledAgents.map(a => renderItem(a)).join('');
     }
 }
 
@@ -514,7 +641,6 @@ function showCreateAgentModal() {
     document.getElementById('new-agent-id').value = '';
     document.getElementById('new-agent-name').value = '';
     document.getElementById('new-agent-desc').value = '';
-    document.getElementById('new-agent-skillset').value = '';
     document.getElementById('new-agent-id').focus();
 }
 
@@ -549,8 +675,8 @@ function setImportMode(mode) {
     const fileMode = mode === 'file';
     document.getElementById('import-file-panel').classList.toggle('hidden', !fileMode);
     document.getElementById('import-paste-panel').classList.toggle('hidden', fileMode);
-    document.getElementById('import-file-tab').className = `px-4 py-2 text-sm font-medium border-b-2 ${fileMode ? 'text-indigo-600 border-indigo-600' : 'text-gray-500 border-transparent'}`;
-    document.getElementById('import-paste-tab').className = `px-4 py-2 text-sm font-medium border-b-2 ${fileMode ? 'text-gray-500 border-transparent' : 'text-indigo-600 border-indigo-600'}`;
+    document.getElementById('import-file-tab').classList.toggle('is-active', fileMode);
+    document.getElementById('import-paste-tab').classList.toggle('is-active', !fileMode);
     setImportError('');
     if (!fileMode) document.getElementById('import-agent-json').focus();
 }
@@ -563,8 +689,7 @@ function setImportError(message) {
 
 function handleImportDrag(event) {
     event.preventDefault();
-    event.currentTarget.classList.toggle('border-indigo-500', event.type === 'dragover');
-    event.currentTarget.classList.toggle('bg-indigo-50', event.type === 'dragover');
+    event.currentTarget.classList.toggle('is-over', event.type === 'dragover');
 }
 
 function handleImportDrop(event) {
@@ -635,18 +760,11 @@ async function createAgent() {
     const id = document.getElementById('new-agent-id').value.trim();
     const name = document.getElementById('new-agent-name').value.trim();
     const description = document.getElementById('new-agent-desc').value.trim();
-    const skillsetId = document.getElementById('new-agent-skillset').value;
     if (!id || !name) return alert('ID and Name are required.');
     if (!/^[a-zA-Z0-9_]+$/.test(id)) return alert('ID must be alphanumeric with underscores only.');
 
-    let url, body;
-    if (skillsetId) {
-        url = `/api/skillsets/${skillsetId}/apply`;
-        body = JSON.stringify({id, name, description});
-    } else {
-        url = '/api/agents';
-        body = JSON.stringify({id, name, description});
-    }
+    const url = '/api/agents';
+    const body = JSON.stringify({id, name, description});
 
     const res = await fetch(url, {
         method: 'POST',
@@ -693,16 +811,6 @@ async function deleteAgent(agentId, name) {
 
 let workplacesLoaded = false;
 
-function showToast(message, type = 'success') {
-    const container = document.getElementById('toast-container');
-    if (!container) return;
-    const toast = document.createElement('div');
-    toast.className = 'px-4 py-3 rounded-lg shadow-lg text-white font-medium transition-opacity duration-500 ' +
-        (type === 'success' ? 'bg-green-600' : type === 'info' ? 'bg-blue-600' : 'bg-red-600');
-    toast.textContent = message;
-    container.appendChild(toast);
-    setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 500); }, 3000);
-}
 
 const TYPE_LABELS = { local: 'Local', remote: 'Remote SSH', tunnel: 'Tunnel', bwrap: 'Bwrap' };
 const TYPE_COLORS = {
@@ -727,15 +835,16 @@ function renderWorkplaceCard(h) {
     const typeCls = TYPE_COLORS[h.type] || 'bg-gray-100 text-gray-700';
     const status = h.status || 'disconnected';
     const agentCount = h.agent_count || 0;
-    const connectorInfo = h.connector ? `<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">${h.connector.device_name || ''} · ${h.connector.platform || ''}</p>` : '';
+    // device_name / platform come from the Evonet device's headers: never trust them as HTML
+    const connectorInfo = h.connector ? `<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">${esc(h.connector.device_name)} · ${esc(h.connector.platform)}</p>` : '';
     return `
-    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm hover:shadow-md transition-shadow p-5 cursor-pointer" onclick="window.location='/workplaces/${h.id}'">
+    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm hover:shadow-md transition-shadow p-5 cursor-pointer" onclick="window.location='/workplaces/${encodeURIComponent(h.id).replace(/'/g, '%27')}'">
         <div class="flex items-start justify-between gap-2 mb-3">
             <div class="flex-1 min-w-0">
-                <h3 class="font-semibold text-gray-900 dark:text-gray-100 truncate">${h.name}</h3>
+                <h3 class="font-semibold text-gray-900 dark:text-gray-100 truncate">${esc(h.name)}</h3>
                 ${connectorInfo}
             </div>
-            <span class="flex-shrink-0 text-xs font-medium px-2 py-0.5 rounded-full ${typeCls}">${typeLabel}</span>
+            <span class="flex-shrink-0 text-xs font-medium px-2 py-0.5 rounded-full ${typeCls}">${esc(typeLabel)}</span>
         </div>
         <div class="flex items-center gap-4 text-sm text-gray-500 dark:text-gray-400">
             <span class="flex items-center gap-1.5">${statusDot(status)} ${status.charAt(0).toUpperCase() + status.slice(1)}</span>
@@ -744,10 +853,13 @@ function renderWorkplaceCard(h) {
     </div>`;
 }
 
+const WORKPLACE_PAGE = 60; // cards rendered per "Show more" step
 let workplaceList = [];
+let workplacesShown = WORKPLACE_PAGE;
 
 function loadWorkplaces() {
-    $.get('/api/workplaces', function(data) {
+    // summary=1: one query, no agent lists, no SSH passwords or connector tokens
+    $.get('/api/workplaces?summary=1', function(data) {
         workplaceList = data || [];
         renderWorkplaces();
         workplacesLoaded = true;
@@ -757,14 +869,16 @@ function loadWorkplaces() {
 function renderWorkplaces() {
     const grid = $('#workplaces-grid');
     const empty = $('#workplaces-empty');
+    const more = $('#workplaces-more');
     const searchEl = document.getElementById('workplace-search');
     const search = searchEl ? searchEl.value.toLowerCase().trim() : '';
     const filtered = search
-        ? workplaceList.filter(w => (w.name || w.id).toLowerCase().includes(search) || (w.type || '').toLowerCase().includes(search))
+        ? workplaceList.filter(w => [w.name || w.id, w.type, w.connector && w.connector.device_name]
+            .some(v => (v || '').toLowerCase().includes(search)))
         : workplaceList;
-    grid.empty();
     if (!filtered.length) {
-        grid.addClass('hidden');
+        grid.empty().addClass('hidden');
+        more.addClass('hidden');
         empty.removeClass('hidden');
         empty.find('p:first-of-type').text(search ? 'No workplaces found' : 'No workplaces yet');
         empty.find('p:last-of-type').text(search ? 'Try a different search term.' : 'Create a workplace to assign execution environments to your agents.');
@@ -772,10 +886,19 @@ function renderWorkplaces() {
     }
     grid.removeClass('hidden');
     empty.addClass('hidden');
-    filtered.forEach(h => grid.append(renderWorkplaceCard(h)));
+    grid.html(filtered.slice(0, workplacesShown).map(renderWorkplaceCard).join(''));
+    const remaining = filtered.length - Math.min(workplacesShown, filtered.length);
+    more.toggleClass('hidden', remaining === 0);
+    more.find('[data-more-count]').text(`Showing ${filtered.length - remaining} of ${filtered.length}`);
 }
 
 function filterWorkplaces() {
+    workplacesShown = WORKPLACE_PAGE;
+    renderWorkplaces();
+}
+
+function showMoreWorkplaces() {
+    workplacesShown += WORKPLACE_PAGE;
     renderWorkplaces();
 }
 
@@ -836,6 +959,363 @@ function createWorkplace() {
             showToast((xhr.responseJSON && xhr.responseJSON.error) || 'Failed to create workplace', 'error');
         }
     });
+}
+
+// ===================== TEMPLATES =====================
+
+let templatesLoaded = false;
+let templates = [];
+let tplPreviewReport = null;
+let tplCreateReport = null;
+let tplRenderTimer = null;
+
+async function loadTemplates(force) {
+    if (templatesLoaded && !force) return;
+    const grid = document.getElementById('templates-grid');
+    const empty = document.getElementById('templates-empty');
+    const loading = document.getElementById('templates-loading');
+    if (loading) loading.classList.remove('hidden');
+    try {
+        const res = await fetch('/api/templates');
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        templates = data.templates || [];
+        templatesLoaded = true;
+        renderTemplates();
+    } catch (e) {
+        console.error('Failed to load templates:', e);
+        if (grid) grid.innerHTML = '';
+        if (empty) empty.classList.remove('hidden');
+        showToast('Failed to load templates', 'error');
+    } finally {
+        if (loading) loading.classList.add('hidden');
+    }
+}
+
+function templateMatchesSearch(t, search) {
+    return (t.name || t.id || '').toLowerCase().includes(search) ||
+           (t.description || '').toLowerCase().includes(search) ||
+           (t.category || '').toLowerCase().includes(search);
+}
+
+function filterTemplates() {
+    renderTemplates();
+}
+
+function renderTemplates() {
+    const grid = document.getElementById('templates-grid');
+    const empty = document.getElementById('templates-empty');
+    const collisionsEl = document.getElementById('templates-collisions');
+    if (!grid) return;
+    const search = (document.getElementById('template-search').value || '').toLowerCase().trim();
+    // Shadowed copies and invalid entries are never usable, either way.
+    const visible = templates.filter(t => !t.shadowed && t.valid !== false);
+    const filtered = search ? visible.filter(t => templateMatchesSearch(t, search)) : visible;
+
+    if (collisionsEl) {
+        // Only actionable states are surfaced: two entries inside agent_templates/
+        // claiming one id, or a canonical template that failed to load.
+        const problems = templates.filter(t => t.valid === false);
+        if (problems.length) {
+            collisionsEl.textContent = 'Templates that need attention: ' + problems.map(
+                t => t.id + ' (' + (t.error || 'duplicate id inside agent_templates/') + ')'
+            ).join('; ');
+            collisionsEl.classList.remove('hidden');
+        } else {
+            collisionsEl.classList.add('hidden');
+            collisionsEl.textContent = '';
+        }
+    }
+
+    if (filtered.length === 0) {
+        grid.innerHTML = '';
+        if (empty) {
+            empty.classList.remove('hidden');
+            const p = empty.querySelector('p:first-of-type');
+            if (p) p.textContent = search ? 'No templates found' : 'No templates available';
+            const hint = empty.querySelector('p:nth-of-type(2)');
+            if (hint) hint.textContent = 'Templates let you create pre-configured agents in a few clicks.';
+        }
+        return;
+    }
+    if (empty) empty.classList.add('hidden');
+
+    grid.innerHTML = filtered.map(templateCard).join('');
+    if (window.lucide && lucide.createIcons) lucide.createIcons();
+}
+
+function templateCard(t) {
+    const icon = t.icon || 'layout-template';
+    const category = t.category ? `<span class="ag-chip">${esc(t.category)}</span>` : '';
+    const stats = [
+        (t.parameter_count || 0) + ' parameter' + (t.parameter_count === 1 ? '' : 's'),
+        (t.tool_count || 0) + ' tool' + (t.tool_count === 1 ? '' : 's'),
+        (t.skill_count || 0) + ' skill' + (t.skill_count === 1 ? '' : 's'),
+    ];
+    return `
+    <div class="ag-card tp-card">
+        <div class="ag-card-top">
+            <span class="tp-ic"><i data-lucide="${esc(icon)}"></i></span>
+            <div class="ag-title">
+                <div class="ag-name-row"><h3 class="ag-name">${esc(t.name || t.id)}</h3></div>
+                <span class="ag-id">${esc(t.id)}</span>
+            </div>
+            ${category}
+        </div>
+        <p class="ag-desc">${esc(t.description || 'No description')}</p>
+        <div class="tp-stats">${stats.map(x => `<span>${x}</span>`).join('')}</div>
+        <div class="tp-actions">
+            <button type="button" onclick="openTemplatePreview('${esc(t.id)}')" class="ag-btn ag-btn-ghost">Preview</button>
+            <button type="button" onclick="openTemplateCreate('${esc(t.id)}')" class="ag-btn ag-btn-primary">Create Agent</button>
+        </div>
+    </div>`;
+}
+
+async function fetchTemplateReport(id) {
+    const res = await fetch('/api/templates/' + encodeURIComponent(id));
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return res.json();
+}
+
+// Full editor page lives in T9; the route already exists.
+function templateEditorHref(id) {
+    return '/template/' + encodeURIComponent(id);
+}
+
+// ---- Preview modal ----
+
+async function openTemplatePreview(id) {
+    const modal = document.getElementById('template-preview-modal');
+    const body = document.getElementById('tpl-preview-body');
+    const title = document.getElementById('tpl-preview-title');
+    if (!modal) return;
+    if (title) title.textContent = 'Template';
+    body.innerHTML = '<p class="text-gray-400">Loading&hellip;</p>';
+    modal.classList.remove('hidden');
+    try {
+        const report = await fetchTemplateReport(id);
+        tplPreviewReport = report;
+        const tpl = report.template || {};
+        if (title) title.textContent = tpl.name || id;
+        document.getElementById('tpl-preview-edit').href = templateEditorHref(id);
+        body.innerHTML = templatePreviewHtml(report, tpl);
+        if (window.lucide && lucide.createIcons) lucide.createIcons();
+    } catch (e) {
+        console.error('preview failed', e);
+        body.innerHTML = '<p class="text-red-500">Failed to load template.</p>';
+    }
+}
+
+function templatePreviewHtml(report, tpl) {
+    const params = tpl.parameters || [];
+    const tools = ((report.tools || {}).declared) || [];
+    const skills = ((report.skills || {}).declared) || [];
+    const defaults = tpl.defaults || {};
+    const warnings = report.warnings || [];
+    const errors = report.errors || [];
+    const section = (t, inner) => `<div class="mb-4"><h4 class="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-1">${t}</h4>${inner}</div>`;
+    const chips = (items) => items.length
+        ? `<div class="flex flex-wrap gap-1">${items.map(x => `<span class="text-xs px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-700/50 text-gray-700 dark:text-gray-300">${esc(String(x))}</span>`).join('')}</div>`
+        : '<p class="text-xs text-gray-400">None</p>';
+
+    const paramHtml = params.length
+        ? `<div class="space-y-1">${params.map(p => `
+            <div class="flex items-center justify-between gap-2 text-sm">
+                <span class="text-gray-700 dark:text-gray-300">${esc(p.label || p.name)}${p.required ? ' <span class="text-red-500">*</span>' : ''}</span>
+                <span class="text-xs text-gray-400">${esc(p.type || 'text')}${(p.default !== undefined && p.default !== null && p.default !== '') ? ' &middot; default: ' + esc(String(p.default)) : ''}</span>
+            </div>`).join('')}</div>`
+        : '<p class="text-xs text-gray-400">No parameters</p>';
+
+    const defaultsHtml = Object.keys(defaults).length
+        ? `<div class="space-y-1">${Object.keys(defaults).map(k => `<div class="flex justify-between gap-2 text-sm"><span class="text-gray-700 dark:text-gray-300">${esc(k)}</span><span class="text-xs text-gray-400 font-mono">${esc(String(defaults[k]))}</span></div>`).join('')}</div>`
+        : '<p class="text-xs text-gray-400">No overrides</p>';
+
+    const issues = errors.length
+        ? `<div class="mb-4 rounded-md border border-red-300 bg-red-50 p-2 text-xs text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-300">${errors.map(esc).join('<br>')}</div>`
+        : '';
+    const warnHtml = warnings.length
+        ? `<div class="mb-4 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-800 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-200">${warnings.map(esc).join('<br>')}</div>`
+        : '';
+
+    return `${issues}${warnHtml}
+        ${section('Parameters', paramHtml)}
+        ${section('Tools', chips(tools))}
+        ${section('Skills', chips(skills))}
+        ${section('Defaults', defaultsHtml)}`;
+}
+
+function closeTemplatePreview() {
+    const modal = document.getElementById('template-preview-modal');
+    if (modal) modal.classList.add('hidden');
+}
+
+function createFromPreviewedTemplate() {
+    if (!tplPreviewReport) return;
+    const id = (tplPreviewReport.template || {}).id || tplPreviewReport.id;
+    closeTemplatePreview();
+    openTemplateCreate(id);
+}
+
+// ---- Create-from-template modal ----
+
+async function openTemplateCreate(id) {
+    const modal = document.getElementById('template-create-modal');
+    const fields = document.getElementById('tpl-param-fields');
+    if (!modal || !fields) return;
+    tplCreateReport = null;
+    document.getElementById('tpl-create-name').textContent = '';
+    fields.innerHTML = '<p class="text-xs text-gray-400">Loading&hellip;</p>';
+    const preview = document.getElementById('tpl-prompt-preview');
+    if (preview) preview.textContent = '';
+    const warnEl = document.getElementById('tpl-render-warnings');
+    if (warnEl) { warnEl.classList.add('hidden'); warnEl.innerHTML = ''; }
+    document.getElementById('tpl-resolved-summary').innerHTML = '';
+    document.getElementById('tpl-agent-id').value = '';
+    document.getElementById('tpl-agent-name').value = '';
+    modal.classList.remove('hidden');
+    try {
+        const report = await fetchTemplateReport(id);
+        tplCreateReport = report;
+        const tpl = report.template || {};
+        document.getElementById('tpl-create-name').textContent = tpl.name || id;
+        document.getElementById('tpl-agent-name').value = tpl.name || id;
+        fields.innerHTML = buildTemplateParamFields(tpl.parameters || []);
+        bindTemplateParamInputs();
+        await renderTemplatePreview();
+    } catch (e) {
+        console.error('create modal failed', e);
+        fields.innerHTML = '<p class="text-red-500 text-xs">Failed to load template.</p>';
+    }
+}
+
+function buildTemplateParamFields(params) {
+    if (!params.length) return '<p class="text-xs text-gray-400 col-span-full">This template has no parameters.</p>';
+    return params.map(p => {
+        const fieldId = 'tpl-param-' + p.name;
+        const label = esc(p.label || p.name);
+        const required = p.required ? ' <span class="text-red-500">*</span>' : '';
+        const def = (p.default === undefined || p.default === null) ? '' : String(p.default);
+        let control;
+        if (p.type === 'select' && Array.isArray(p.options) && p.options.length) {
+            control = `<select id="${fieldId}" data-param="${esc(p.name)}" class="w-full p-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md text-sm focus:border-indigo-500 focus:outline-none">` +
+                p.options.map(o => `<option value="${esc(String(o))}"${String(o) === def ? ' selected' : ''}>${esc(String(o))}</option>`).join('') +
+                `</select>`;
+        } else if (p.type === 'boolean') {
+            control = `<input type="checkbox" id="${fieldId}" data-param="${esc(p.name)}"${(def === 'true' || def === '1') ? ' checked' : ''} class="w-4 h-4 rounded border-gray-300 dark:border-gray-600">`;
+        } else if (p.type === 'number') {
+            control = `<input type="number" id="${fieldId}" data-param="${esc(p.name)}" value="${esc(def)}" class="w-full p-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md text-sm focus:border-indigo-500 focus:outline-none">`;
+        } else {
+            control = `<input type="text" id="${fieldId}" data-param="${esc(p.name)}" value="${esc(def)}" class="w-full p-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md text-sm focus:border-indigo-500 focus:outline-none">`;
+        }
+        return `<div>
+            <label class="block mb-1 text-sm font-medium text-gray-700 dark:text-gray-300" for="${fieldId}">${label}${required}</label>
+            ${control}
+        </div>`;
+    }).join('');
+}
+
+function bindTemplateParamInputs() {
+    document.querySelectorAll('#tpl-param-fields [data-param]').forEach(el => {
+        el.addEventListener('input', scheduleTemplateRender);
+        el.addEventListener('change', scheduleTemplateRender);
+    });
+}
+
+function collectTemplateParams() {
+    const params = {};
+    document.querySelectorAll('#tpl-param-fields [data-param]').forEach(el => {
+        const name = el.getAttribute('data-param');
+        const value = (el.type === 'checkbox') ? (el.checked ? 'true' : 'false') : el.value;
+        // Omit blank fields so the template's own default applies server-side.
+        if (value !== '' && value !== undefined && value !== null) params[name] = value;
+    });
+    return params;
+}
+
+function scheduleTemplateRender() {
+    if (tplRenderTimer) clearTimeout(tplRenderTimer);
+    tplRenderTimer = setTimeout(renderTemplatePreview, 250);
+}
+
+async function renderTemplatePreview() {
+    if (!tplCreateReport) return;
+    const id = (tplCreateReport.template || {}).id || tplCreateReport.id;
+    const preview = document.getElementById('tpl-prompt-preview');
+    const warnEl = document.getElementById('tpl-render-warnings');
+    try {
+        const res = await fetch('/api/templates/' + encodeURIComponent(id) + '/render', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ params: collectTemplateParams() }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            if (warnEl) { warnEl.textContent = data.message || data.error || 'Render failed'; warnEl.classList.remove('hidden'); }
+            return;
+        }
+        if (preview) preview.textContent = data.system_prompt || '';
+        renderResolvedSummary(data);
+        if (warnEl) {
+            const warns = data.warnings || [];
+            if (warns.length) { warnEl.innerHTML = warns.map(esc).join('<br>'); warnEl.classList.remove('hidden'); }
+            else { warnEl.classList.add('hidden'); warnEl.innerHTML = ''; }
+        }
+    } catch (e) {
+        console.error('render preview failed', e);
+    }
+}
+
+function renderResolvedSummary(data) {
+    const el = document.getElementById('tpl-resolved-summary');
+    if (!el) return;
+    const res = data.resolution || {};
+    const tools = ((res.tools || {}).resolved) || [];
+    const skills = ((res.skills || {}).resolved) || [];
+    const values = data.values || {};
+    const chip = (x) => `<span class="text-xs px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-700/50 text-gray-700 dark:text-gray-300">${esc(String(x))}</span>`;
+    const valueChips = Object.keys(values).map(k => `<span class="text-xs px-2 py-0.5 rounded-full bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300">${esc(k)}: ${esc(String(values[k]))}</span>`);
+    el.innerHTML =
+        `<div class="flex flex-wrap items-center gap-1 mb-1"><span class="text-xs font-semibold text-gray-400 mr-1">Tools</span>${tools.length ? tools.map(chip).join('') : '<span class="text-xs text-gray-400">none</span>'}</div>` +
+        `<div class="flex flex-wrap items-center gap-1 mb-1"><span class="text-xs font-semibold text-gray-400 mr-1">Skills</span>${skills.length ? skills.map(chip).join('') : '<span class="text-xs text-gray-400">none</span>'}</div>` +
+        `<div class="flex flex-wrap items-center gap-1">${valueChips.join('')}</div>`;
+}
+
+function closeTemplateCreate() {
+    const modal = document.getElementById('template-create-modal');
+    if (modal) modal.classList.add('hidden');
+    tplCreateReport = null;
+}
+
+async function submitTemplateCreate() {
+    if (!tplCreateReport) return;
+    const id = (tplCreateReport.template || {}).id || tplCreateReport.id;
+    const agentId = document.getElementById('tpl-agent-id').value.trim();
+    const agentName = document.getElementById('tpl-agent-name').value.trim();
+    const btn = document.getElementById('tpl-create-submit');
+    const body = { params: collectTemplateParams() };
+    if (agentId) body.id = agentId;
+    if (agentName) body.overrides = { name: agentName };
+    if (btn) btn.disabled = true;
+    try {
+        const res = await fetch('/api/templates/' + encodeURIComponent(id) + '/instantiate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            showToast(data.message || data.error || 'Failed to create agent', 'error');
+            return;
+        }
+        closeTemplateCreate();
+        showToast(data.replayed ? 'Agent already exists' : 'Agent created', 'success');
+        window.location = '/agents/' + encodeURIComponent(data.agent_id);
+    } catch (e) {
+        console.error('instantiate failed', e);
+        showToast('Failed to create agent', 'error');
+    } finally {
+        if (btn) btn.disabled = false;
+    }
 }
 
 // ===================== SHARED =====================

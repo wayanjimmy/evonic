@@ -1,0 +1,837 @@
+{
+  "id": "text-to-speech",
+  "name": "Text to Speech",
+  "version": "1.0.0",
+  "description": "Converts text to spoken audio artifacts through configured cloud providers. Provider selection is explicit or uses the configured default.",
+  "brief": "Use the `text-to-speech` skill only after an administrator enables it and configures a provider. The `generate_speech` tool accepts an explicit provider or uses the configured default provider and saves an audio artifact.",
+  "author": "Evonic",
+  "tools_file": "tools.json",
+  "lazy_tools": true,
+  "default_enabled": false,
+  "variables": [
+    {
+      "name": "default_provider",
+      "label": "Default Provider",
+      "type": "select",
+      "default": "",
+      "description": "Provider ID used when generate_speech does not specify a provider. It must identify an enabled provider.",
+      "section": "global",
+      "options": [
+        {
+          "value": "google-gemini",
+          "label": "Google Gemini"
+        },
+        {
+          "value": "openai",
+          "label": "OpenAI"
+        },
+        {
+          "value": "openrouter",
+          "label": "OpenRouter"
+        },
+        {
+          "value": "elevenlabs",
+          "label": "ElevenLabs"
+        },
+        {
+          "value": "mock",
+          "label": "Deterministic Mock"
+        }
+      ],
+      "empty_label": "— No default provider —"
+    },
+    {
+      "name": "allow_local_providers",
+      "label": "Allow Approved Local Providers",
+      "type": "boolean",
+      "default": false,
+      "description": "When enabled, permits enabled providers declared as local (e.g. the mock provider).",
+      "section": "global"
+    },
+    {
+      "name": "google_gemini_enabled",
+      "label": "Enabled",
+      "type": "boolean",
+      "default": true,
+      "description": "Enable Google Gemini speech synthesis using the configured credential.",
+      "provider": "google-gemini"
+    },
+    {
+      "name": "openai_enabled",
+      "label": "Enabled",
+      "type": "boolean",
+      "default": false,
+      "description": "Enable OpenAI speech synthesis using the configured credential.",
+      "provider": "openai"
+    },
+    {
+      "name": "mock_enabled",
+      "label": "Enabled",
+      "type": "boolean",
+      "default": false,
+      "description": "Development and test only. Enable the deterministic mock provider.",
+      "provider": "mock"
+    },
+    {
+      "name": "google_gemini_api_key",
+      "label": "Google Gemini API Key",
+      "type": "secret",
+      "default": "",
+      "description": "Write-only Google Generative Language API credential.",
+      "provider": "google-gemini"
+    },
+    {
+      "name": "google_gemini_model",
+      "label": "Google Gemini TTS Model",
+      "type": "select",
+      "default": "gemini-2.5-flash-preview-tts",
+      "description": "Approved Gemini TTS model.",
+      "provider": "google-gemini",
+      "options": [
+        {
+          "value": "gemini-2.5-flash-preview-tts",
+          "label": "gemini-2.5-flash-preview-tts"
+        },
+        {
+          "value": "gemini-2.5-pro-preview-tts",
+          "label": "gemini-2.5-pro-preview-tts"
+        }
+      ],
+      "empty_label": "— Default —"
+    },
+    {
+      "name": "google_gemini_voice",
+      "label": "Google Gemini Default Voice",
+      "type": "select",
+      "default": "Kore",
+      "description": "Voice used when the agent does not pick one (e.g. Kore, Puck, Charon, Zephyr).",
+      "provider": "google-gemini",
+      "options": [
+        {
+          "value": "Zephyr",
+          "label": "Zephyr — Bright"
+        },
+        {
+          "value": "Puck",
+          "label": "Puck — Upbeat"
+        },
+        {
+          "value": "Charon",
+          "label": "Charon — Informative"
+        },
+        {
+          "value": "Kore",
+          "label": "Kore — Firm"
+        },
+        {
+          "value": "Fenrir",
+          "label": "Fenrir — Excitable"
+        },
+        {
+          "value": "Leda",
+          "label": "Leda — Youthful"
+        },
+        {
+          "value": "Orus",
+          "label": "Orus — Firm"
+        },
+        {
+          "value": "Aoede",
+          "label": "Aoede — Breezy"
+        },
+        {
+          "value": "Callirrhoe",
+          "label": "Callirrhoe — Easy-going"
+        },
+        {
+          "value": "Autonoe",
+          "label": "Autonoe — Bright"
+        },
+        {
+          "value": "Enceladus",
+          "label": "Enceladus — Breathy"
+        },
+        {
+          "value": "Iapetus",
+          "label": "Iapetus — Clear"
+        },
+        {
+          "value": "Umbriel",
+          "label": "Umbriel — Easy-going"
+        },
+        {
+          "value": "Algieba",
+          "label": "Algieba — Smooth"
+        },
+        {
+          "value": "Despina",
+          "label": "Despina — Smooth"
+        },
+        {
+          "value": "Erinome",
+          "label": "Erinome — Clear"
+        },
+        {
+          "value": "Algenib",
+          "label": "Algenib — Gravelly"
+        },
+        {
+          "value": "Rasalgethi",
+          "label": "Rasalgethi — Informative"
+        },
+        {
+          "value": "Laomedeia",
+          "label": "Laomedeia — Upbeat"
+        },
+        {
+          "value": "Achernar",
+          "label": "Achernar — Soft"
+        },
+        {
+          "value": "Alnilam",
+          "label": "Alnilam — Firm"
+        },
+        {
+          "value": "Schedar",
+          "label": "Schedar — Even"
+        },
+        {
+          "value": "Gacrux",
+          "label": "Gacrux — Mature"
+        },
+        {
+          "value": "Pulcherrima",
+          "label": "Pulcherrima — Forward"
+        },
+        {
+          "value": "Achird",
+          "label": "Achird — Friendly"
+        },
+        {
+          "value": "Zubenelgenubi",
+          "label": "Zubenelgenubi — Casual"
+        },
+        {
+          "value": "Vindemiatrix",
+          "label": "Vindemiatrix — Gentle"
+        },
+        {
+          "value": "Sadachbia",
+          "label": "Sadachbia — Lively"
+        },
+        {
+          "value": "Sadaltager",
+          "label": "Sadaltager — Knowledgeable"
+        },
+        {
+          "value": "Sulafat",
+          "label": "Sulafat — Warm"
+        }
+      ],
+      "empty_label": "— Default —"
+    },
+    {
+      "name": "google_gemini_timeout_seconds",
+      "label": "Google Gemini Timeout (seconds)",
+      "type": "number",
+      "default": 60,
+      "description": "Bounded request timeout, from 1 through 120 seconds.",
+      "provider": "google-gemini",
+      "advanced": true
+    },
+    {
+      "name": "openai_api_key",
+      "label": "OpenAI API Key",
+      "type": "secret",
+      "default": "",
+      "description": "Write-only OpenAI API key used only by the OpenAI provider.",
+      "provider": "openai"
+    },
+    {
+      "name": "openai_model",
+      "label": "OpenAI TTS Model",
+      "type": "select",
+      "default": "gpt-4o-mini-tts",
+      "description": "Approved OpenAI TTS model.",
+      "provider": "openai",
+      "options": [
+        {
+          "value": "gpt-4o-mini-tts",
+          "label": "gpt-4o-mini-tts"
+        },
+        {
+          "value": "tts-1",
+          "label": "tts-1"
+        },
+        {
+          "value": "tts-1-hd",
+          "label": "tts-1-hd"
+        }
+      ],
+      "empty_label": "— Default —"
+    },
+    {
+      "name": "openai_voice",
+      "label": "OpenAI Default Voice",
+      "type": "select",
+      "default": "alloy",
+      "description": "Voice used when the agent does not pick one (e.g. alloy, coral, nova, onyx).",
+      "provider": "openai",
+      "options": [
+        {
+          "value": "alloy",
+          "label": "alloy"
+        },
+        {
+          "value": "ash",
+          "label": "ash"
+        },
+        {
+          "value": "ballad",
+          "label": "ballad"
+        },
+        {
+          "value": "coral",
+          "label": "coral"
+        },
+        {
+          "value": "echo",
+          "label": "echo"
+        },
+        {
+          "value": "fable",
+          "label": "fable"
+        },
+        {
+          "value": "nova",
+          "label": "nova"
+        },
+        {
+          "value": "onyx",
+          "label": "onyx"
+        },
+        {
+          "value": "sage",
+          "label": "sage"
+        },
+        {
+          "value": "shimmer",
+          "label": "shimmer"
+        },
+        {
+          "value": "verse",
+          "label": "verse"
+        }
+      ],
+      "empty_label": "— Default —"
+    },
+    {
+      "name": "openai_timeout_seconds",
+      "label": "OpenAI Timeout (seconds)",
+      "type": "number",
+      "default": 60,
+      "description": "Bounded request timeout, from 1 through 120 seconds.",
+      "provider": "openai",
+      "advanced": true
+    },
+    {
+      "name": "openrouter_enabled",
+      "label": "Enabled",
+      "type": "boolean",
+      "default": false,
+      "description": "Enable OpenRouter speech synthesis using the configured credential.",
+      "provider": "openrouter"
+    },
+    {
+      "name": "openrouter_api_key",
+      "label": "OpenRouter API Key",
+      "type": "secret",
+      "default": "",
+      "description": "Write-only OpenRouter API key used only by the OpenRouter provider.",
+      "provider": "openrouter"
+    },
+    {
+      "name": "openrouter_model",
+      "label": "OpenRouter TTS Model",
+      "type": "string",
+      "default": "hexgrad/kokoro-82m",
+      "description": "Model used when the agent does not pick one, e.g. hexgrad/kokoro-82m or mistralai/voxtral-mini-tts-2603. Use the exact ID from the OpenRouter model page.",
+      "provider": "openrouter",
+      "options": [
+        {
+          "value": "hexgrad/kokoro-82m",
+          "label": "hexgrad/kokoro-82m — Kokoro (no Indonesian)"
+        },
+        {
+          "value": "mistralai/voxtral-mini-tts-2603",
+          "label": "mistralai/voxtral-mini-tts-2603 — Voxtral (EN/FR)"
+        }
+      ],
+      "allow_custom": true,
+      "empty_label": "— Default —"
+    },
+    {
+      "name": "openrouter_voice",
+      "label": "OpenRouter Default Voice",
+      "type": "string",
+      "default": "am_michael",
+      "description": "Persona used when the agent does not pick one. Agents may pick any persona in this list, this default, or an \"Other Allowed Voice\". Voices are model-specific, so match it to the model.",
+      "provider": "openrouter",
+      "options": [
+        {
+          "value": "Zephyr",
+          "label": "Zephyr — Gemini, Bright"
+        },
+        {
+          "value": "Puck",
+          "label": "Puck — Gemini, Upbeat"
+        },
+        {
+          "value": "Charon",
+          "label": "Charon — Gemini, Informative"
+        },
+        {
+          "value": "Kore",
+          "label": "Kore — Gemini, Firm"
+        },
+        {
+          "value": "Fenrir",
+          "label": "Fenrir — Gemini, Excitable"
+        },
+        {
+          "value": "Leda",
+          "label": "Leda — Gemini, Youthful"
+        },
+        {
+          "value": "Orus",
+          "label": "Orus — Gemini, Firm"
+        },
+        {
+          "value": "Aoede",
+          "label": "Aoede — Gemini, Breezy"
+        },
+        {
+          "value": "Callirrhoe",
+          "label": "Callirrhoe — Gemini, Easy-going"
+        },
+        {
+          "value": "Autonoe",
+          "label": "Autonoe — Gemini, Bright"
+        },
+        {
+          "value": "Enceladus",
+          "label": "Enceladus — Gemini, Breathy"
+        },
+        {
+          "value": "Iapetus",
+          "label": "Iapetus — Gemini, Clear"
+        },
+        {
+          "value": "Umbriel",
+          "label": "Umbriel — Gemini, Easy-going"
+        },
+        {
+          "value": "Algieba",
+          "label": "Algieba — Gemini, Smooth"
+        },
+        {
+          "value": "Despina",
+          "label": "Despina — Gemini, Smooth"
+        },
+        {
+          "value": "Erinome",
+          "label": "Erinome — Gemini, Clear"
+        },
+        {
+          "value": "Algenib",
+          "label": "Algenib — Gemini, Gravelly"
+        },
+        {
+          "value": "Rasalgethi",
+          "label": "Rasalgethi — Gemini, Informative"
+        },
+        {
+          "value": "Laomedeia",
+          "label": "Laomedeia — Gemini, Upbeat"
+        },
+        {
+          "value": "Achernar",
+          "label": "Achernar — Gemini, Soft"
+        },
+        {
+          "value": "Alnilam",
+          "label": "Alnilam — Gemini, Firm"
+        },
+        {
+          "value": "Schedar",
+          "label": "Schedar — Gemini, Even"
+        },
+        {
+          "value": "Gacrux",
+          "label": "Gacrux — Gemini, Mature"
+        },
+        {
+          "value": "Pulcherrima",
+          "label": "Pulcherrima — Gemini, Forward"
+        },
+        {
+          "value": "Achird",
+          "label": "Achird — Gemini, Friendly"
+        },
+        {
+          "value": "Zubenelgenubi",
+          "label": "Zubenelgenubi — Gemini, Casual"
+        },
+        {
+          "value": "Vindemiatrix",
+          "label": "Vindemiatrix — Gemini, Gentle"
+        },
+        {
+          "value": "Sadachbia",
+          "label": "Sadachbia — Gemini, Lively"
+        },
+        {
+          "value": "Sadaltager",
+          "label": "Sadaltager — Gemini, Knowledgeable"
+        },
+        {
+          "value": "Sulafat",
+          "label": "Sulafat — Gemini, Warm"
+        },
+        {
+          "value": "af_heart",
+          "label": "af_heart — Kokoro, Heart, US female, A-"
+        },
+        {
+          "value": "af_bella",
+          "label": "af_bella — Kokoro, Bella, US female, A-"
+        },
+        {
+          "value": "af_nicole",
+          "label": "af_nicole — Kokoro, Nicole, US female, B-"
+        },
+        {
+          "value": "af_sarah",
+          "label": "af_sarah — Kokoro, Sarah, US female"
+        },
+        {
+          "value": "af_nova",
+          "label": "af_nova — Kokoro, Nova, US female"
+        },
+        {
+          "value": "af_sky",
+          "label": "af_sky — Kokoro, Sky, US female"
+        },
+        {
+          "value": "am_michael",
+          "label": "am_michael — Kokoro, Michael, US male"
+        },
+        {
+          "value": "am_fenrir",
+          "label": "am_fenrir — Kokoro, Fenrir, US male"
+        },
+        {
+          "value": "am_puck",
+          "label": "am_puck — Kokoro, Puck, US male"
+        },
+        {
+          "value": "bf_emma",
+          "label": "bf_emma — Kokoro, Emma, UK female, B-"
+        },
+        {
+          "value": "bm_george",
+          "label": "bm_george — Kokoro, George, UK male"
+        },
+        {
+          "value": "bm_fable",
+          "label": "bm_fable — Kokoro, Fable, UK male"
+        },
+        {
+          "value": "en_paul_neutral",
+          "label": "en_paul_neutral — Voxtral, US male"
+        },
+        {
+          "value": "alloy",
+          "label": "alloy — OpenAI models"
+        },
+        {
+          "value": "ash",
+          "label": "ash — OpenAI models"
+        },
+        {
+          "value": "ballad",
+          "label": "ballad — OpenAI models"
+        },
+        {
+          "value": "coral",
+          "label": "coral — OpenAI models"
+        },
+        {
+          "value": "echo",
+          "label": "echo — OpenAI models"
+        },
+        {
+          "value": "fable",
+          "label": "fable — OpenAI models"
+        },
+        {
+          "value": "nova",
+          "label": "nova — OpenAI models"
+        },
+        {
+          "value": "onyx",
+          "label": "onyx — OpenAI models"
+        },
+        {
+          "value": "sage",
+          "label": "sage — OpenAI models"
+        },
+        {
+          "value": "shimmer",
+          "label": "shimmer — OpenAI models"
+        },
+        {
+          "value": "verse",
+          "label": "verse — OpenAI models"
+        }
+      ],
+      "allow_custom": true,
+      "empty_label": "— Default —"
+    },
+    {
+      "name": "openrouter_allowed_models",
+      "label": "Other Allowed OpenRouter Models",
+      "type": "string",
+      "default": "",
+      "description": "Comma-separated model IDs an agent may request besides the default.",
+      "provider": "openrouter",
+      "advanced": true
+    },
+    {
+      "name": "openrouter_allowed_voices",
+      "label": "Other Allowed Voices",
+      "type": "string",
+      "default": "",
+      "description": "Comma-separated extra voice IDs agents may use, beyond the personas in the dropdown (e.g. jf_alpha, ef_dora). Agents cannot use any other voice.",
+      "provider": "openrouter",
+      "advanced": true
+    },
+    {
+      "name": "openrouter_timeout_seconds",
+      "label": "OpenRouter Timeout (seconds)",
+      "type": "number",
+      "default": 180,
+      "description": "Bounded request timeout, from 1 through 300 seconds. Some TTS models take over two minutes.",
+      "provider": "openrouter",
+      "advanced": true
+    },
+    {
+      "name": "elevenlabs_enabled",
+      "label": "Enabled",
+      "type": "boolean",
+      "default": false,
+      "description": "Enable ElevenLabs speech synthesis using the configured credential.",
+      "provider": "elevenlabs"
+    },
+    {
+      "name": "elevenlabs_api_key",
+      "label": "ElevenLabs API Key",
+      "type": "secret",
+      "default": "",
+      "description": "Write-only ElevenLabs API key used only by the ElevenLabs provider.",
+      "provider": "elevenlabs"
+    },
+    {
+      "name": "elevenlabs_model",
+      "label": "ElevenLabs TTS Model",
+      "type": "select",
+      "default": "eleven_v4",
+      "description": "Approved ElevenLabs model. Eleven v3/v4 follow inline audio tags in the text such as [whispers] or [sighs].",
+      "provider": "elevenlabs",
+      "options": [
+        {
+          "value": "eleven_v4",
+          "label": "eleven_v4 — Eleven v4, most expressive, 90+ languages"
+        },
+        {
+          "value": "eleven_v4_turbo",
+          "label": "eleven_v4_turbo — Eleven v4 Turbo, lower latency"
+        },
+        {
+          "value": "eleven_v3",
+          "label": "eleven_v3 — Eleven v3, expressive with audio tags"
+        },
+        {
+          "value": "eleven_multilingual_v2",
+          "label": "eleven_multilingual_v2 — Multilingual v2, stable"
+        },
+        {
+          "value": "eleven_flash_v2_5",
+          "label": "eleven_flash_v2_5 — Flash v2.5, fastest"
+        },
+        {
+          "value": "eleven_turbo_v2_5",
+          "label": "eleven_turbo_v2_5 — Turbo v2.5"
+        }
+      ],
+      "empty_label": "— Default —"
+    },
+    {
+      "name": "elevenlabs_voice",
+      "label": "ElevenLabs Default Voice",
+      "type": "string",
+      "default": "o5s6XRBkPSTD4syv6mZg",
+      "description": "Voice ID used when the agent does not pick one. Agents may pick any voice in this list, this default, or an \"Other Allowed Voice\". Library voices require a paid ElevenLabs plan.",
+      "provider": "elevenlabs",
+      "options": [
+        {
+          "value": "o5s6XRBkPSTD4syv6mZg",
+          "label": "Arunika — Indonesian, female, TV voice over (library voice, paid plan)"
+        },
+        {
+          "value": "RWiGLY9uXI70QL540WNd",
+          "label": "Putra — Indonesian, male, smooth (library voice, paid plan)"
+        },
+        {
+          "value": "q8qwd1jY2jS3AWOBeq25",
+          "label": "Pratama — Indonesian, male, confident (library voice, paid plan)"
+        },
+        {
+          "value": "I7sakys8pBZ1Z5f0UhT9",
+          "label": "Putri Maharani — Indonesian (Javanese), female (library voice, paid plan)"
+        },
+        {
+          "value": "Xb7hH8MSUJpSbSDYk0k2",
+          "label": "Alice — British, female, educator (premade)"
+        },
+        {
+          "value": "JBFqnCBsd6RMkjVDRZzb",
+          "label": "George — British, male, storyteller (premade)"
+        },
+        {
+          "value": "EXAVITQu4vr4xnSDxMaL",
+          "label": "Sarah — American, female (premade)"
+        },
+        {
+          "value": "pNInz6obpgDQGcFmaJgB",
+          "label": "Adam — American, male (premade)"
+        },
+        {
+          "value": "onwK4e9ZLuTAKqWW03F9",
+          "label": "Daniel — British, male, broadcaster (premade)"
+        }
+      ],
+      "allow_custom": true,
+      "empty_label": "— Default —"
+    },
+    {
+      "name": "elevenlabs_language_code",
+      "label": "ElevenLabs Language Code",
+      "type": "string",
+      "default": "",
+      "description": "Optional ISO 639-1 language code (e.g. id for Indonesian) to enforce. Leave empty to auto-detect.",
+      "provider": "elevenlabs"
+    },
+    {
+      "name": "elevenlabs_allowed_voices",
+      "label": "Other Allowed Voices",
+      "type": "string",
+      "default": "",
+      "description": "Comma-separated extra ElevenLabs voice IDs agents may use, beyond the voices in the dropdown. Agents cannot use any other voice.",
+      "provider": "elevenlabs",
+      "advanced": true
+    },
+    {
+      "name": "elevenlabs_timeout_seconds",
+      "label": "ElevenLabs Timeout (seconds)",
+      "type": "number",
+      "default": 120,
+      "description": "Bounded request timeout, from 1 through 300 seconds.",
+      "provider": "elevenlabs",
+      "advanced": true
+    },
+    {
+      "name": "allow_agent_overrides",
+      "label": "Allow Agents To Choose Provider, Model and Voice",
+      "type": "boolean",
+      "default": false,
+      "description": "Off: agents always get the provider, model and voice configured here (their own choices are ignored). On: agents may pick another enabled provider, an approved model, or an approved voice persona per request.",
+      "section": "global"
+    },
+    {
+      "name": "max_text_length",
+      "label": "Maximum Characters Per Request",
+      "type": "number",
+      "default": 4000,
+      "description": "Upper limit for text length in a single request (up to 4000).",
+      "section": "global"
+    },
+    {
+      "name": "requests_per_minute",
+      "label": "Requests Per Minute Per Agent",
+      "type": "number",
+      "default": 10,
+      "description": "Per-agent rolling request cap, from 1 through 60.",
+      "section": "global",
+      "advanced": true
+    },
+    {
+      "name": "max_concurrent_requests",
+      "label": "Maximum Concurrent Requests Per Agent",
+      "type": "number",
+      "default": 1,
+      "description": "Per-agent in-flight synthesis cap (1 through 4).",
+      "section": "global",
+      "advanced": true
+    },
+    {
+      "name": "characters_per_day",
+      "label": "Characters Per Day Per Agent",
+      "type": "number",
+      "default": 50000,
+      "description": "Per-agent rolling 24-hour character quota.",
+      "section": "global",
+      "advanced": true
+    }
+  ],
+  "settings_ui": {
+    "layout": "provider-first",
+    "provider_selector": {
+      "label": "Provider",
+      "description": "Choose the provider you want to configure. Your unsaved values are retained while you switch providers.",
+      "empty_label": "— Select a provider —",
+      "providers": [
+        {
+          "id": "google-gemini",
+          "label": "Google Gemini",
+          "description": "Cloud speech synthesis through an approved Gemini TTS model."
+        },
+        {
+          "id": "openai",
+          "label": "OpenAI",
+          "description": "Cloud speech synthesis through an approved OpenAI TTS model."
+        },
+        {
+          "id": "openrouter",
+          "label": "OpenRouter",
+          "description": "Cloud speech synthesis through OpenRouter (OpenAI, Mistral Voxtral, Gemini and more) with an administrator-approved model."
+        },
+        {
+          "id": "elevenlabs",
+          "label": "ElevenLabs",
+          "description": "Cloud speech synthesis through ElevenLabs (Eleven v4/v3 with audio tags, Indonesian and 70+ languages)."
+        },
+        {
+          "id": "mock",
+          "label": "Deterministic Mock",
+          "description": "Development-only provider that returns a short silent WAV."
+        }
+      ]
+    },
+    "global_section": {
+      "id": "text-to-speech-defaults",
+      "label": "Global Text to Speech Defaults",
+      "description": "These preferences apply to Text to Speech regardless of the provider you are configuring."
+    }
+  }
+}

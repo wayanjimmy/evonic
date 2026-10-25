@@ -49,10 +49,44 @@ def _coerce_boolean(value: Any) -> bool:
     raise ValueError('must be a boolean')
 
 
+def _decim_settings_public(settings) -> Dict[str, Any]:
+    """Serialize provider-neutral Decim Safety settings (never transport data).
+
+    ``provider_endpoint`` is plain configuration and is returned verbatim so the
+    admin surface can display and edit it.
+    """
+    return {
+        'enabled': settings.enabled,
+        'mode': settings.mode,
+        'provider': settings.provider,
+        'provider_endpoint': getattr(settings, 'provider_endpoint', '') or '',
+        'request_timeout_ms': settings.request_timeout_ms,
+        'minimum_confidence': settings.minimum_confidence,
+        'max_payload_chars': settings.max_payload_chars,
+        'circuit_breaker_failures': settings.circuit_breaker_failures,
+        'circuit_breaker_cooldown_seconds': settings.circuit_breaker_cooldown_seconds,
+        'record_enforce_events': settings.record_enforce_events,
+        'retention_days': settings.retention_days,
+    }
+
+
 @settings_bp.route('/system')
 def settings():
     """System page - manage tests"""
     return render_template('settings.html')
+
+
+@settings_bp.route('/system/safety')
+def safety_page():
+    """Consolidated Safety administration page (General / HMADS / DMSS).
+
+    Single entry point under System > Safety: the General tab explains the
+    HMADS-only vs DMSS-enabled policy choice, the HMADS tab hosts the
+    deterministic safety-rules CRUD, and the DMSS tab hosts the Decim Safety
+    dashboard. Legacy routes (/system#hmads, /system/decim-safety) redirect
+    here.
+    """
+    return render_template('safety.html')
 
 
 @settings_bp.route('/system/models')
@@ -295,6 +329,7 @@ def api_list_tools():
             'enable_atg': bool(agent.get('enable_atg')) and bool(agent.get('enable_agent_state')),
             'enable_cmp': bool(agent.get('enable_cmp')) and bool(agent.get('enable_agent_state')),
             'always_execute': bool(agent.get('always_execute')),
+            'workplace_switch_enabled': bool(agent.get('workplace_switch_enabled')),
         }
 
     # Built-ins are filtered by the selected agent's feature settings when supplied.
@@ -584,6 +619,35 @@ def api_two_pass_enabled():
     return jsonify({'enabled': val == '1'})
 
 
+@settings_bp.route('/api/settings/two-factor-auth', methods=['GET', 'PUT'])
+def api_two_factor_auth():
+    """Get or update TOTP enforcement, respecting the environment override."""
+    from backend import totp
+
+    effective, overridden = totp.get_enabled_state()
+    configured = totp.is_configured()
+    stored = db.get_setting('two_factor_auth_enabled', '0') == '1'
+    if request.method == 'PUT':
+        data = request.get_json() or {}
+        try:
+            enabled = _coerce_boolean(data.get('enabled'))
+        except ValueError:
+            return jsonify({'success': False, 'error': 'enabled must be a boolean'}), 400
+        old_val = db.get_setting('two_factor_auth_enabled', '0')
+        new_val = '1' if enabled else '0'
+        db.set_setting('two_factor_auth_enabled', new_val)
+        _audit_setting_change('two_factor_auth_enabled', old_val, new_val)
+        stored = enabled
+        effective, overridden = totp.get_enabled_state()
+    return jsonify({
+        'success': True,
+        'enabled': effective,
+        'stored_enabled': stored,
+        'env_override': overridden,
+        'configured': configured,
+    })
+
+
 @settings_bp.route('/api/settings/public-history', methods=['GET', 'PUT'])
 def api_public_history():
     """Get or set the public history page toggle."""
@@ -609,6 +673,70 @@ def api_long_running_guard():
     db.set_setting('long_running_guard_enabled', enabled)
     _audit_setting_change('long_running_guard_enabled', old_val, enabled)
     return jsonify({'success': True, 'enabled': enabled == '1'})
+
+
+@settings_bp.route('/api/settings/root-fs-scan-guard', methods=['GET', 'PUT'])
+def api_root_fs_scan_guard():
+    """Toggle the root filesystem scan guard (`find /`, `tree /` approval prompt)."""
+    from models.db import db
+    default = '1' if config.ROOT_FS_SCAN_GUARD_ENABLED else '0'
+    if request.method == 'PUT':
+        data = request.get_json() or {}
+        enabled = '1' if data.get('enabled', True) else '0'
+        old_val = db.get_setting('root_fs_scan_guard_enabled', default)
+        db.set_setting('root_fs_scan_guard_enabled', enabled)
+        _audit_setting_change('root_fs_scan_guard_enabled', old_val, enabled)
+        return jsonify({'success': True, 'enabled': enabled == '1'})
+    val = db.get_setting('root_fs_scan_guard_enabled', default)
+    return jsonify({'enabled': val == '1'})
+
+
+@settings_bp.route('/api/settings/decim-safety', methods=['GET', 'PUT'])
+def api_decim_safety_settings():
+    """Read or update Decim Safety settings.
+
+    ``provider_endpoint`` is plain configuration: GET returns it verbatim and a
+    PUT replaces it with the submitted value (an empty string clears it).
+    """
+    from backend.tools.lib.decim_safety import (
+        load_decim_settings, validate_decim_settings, save_decim_settings,
+    )
+
+    if request.method == 'PUT':
+        data = request.get_json() or {}
+        current = load_decim_settings()
+        endpoint = current.provider_endpoint
+        if 'provider_endpoint' in data:
+            submitted = data.get('provider_endpoint')
+            if not isinstance(submitted, str):
+                return jsonify({'success': False, 'error': 'provider_endpoint must be a string'}), 400
+            endpoint = submitted.strip()
+        merged = {
+            'enabled': data.get('enabled', current.enabled),
+            'mode': data.get('mode', current.mode),
+            'provider': data.get('provider', current.provider),
+            'provider_endpoint': endpoint,
+            'request_timeout_ms': data.get('request_timeout_ms', current.request_timeout_ms),
+            'minimum_confidence': data.get('minimum_confidence', current.minimum_confidence),
+            'max_payload_chars': data.get('max_payload_chars', current.max_payload_chars),
+            'circuit_breaker_failures': data.get('circuit_breaker_failures', current.circuit_breaker_failures),
+            'circuit_breaker_cooldown_seconds': data.get('circuit_breaker_cooldown_seconds', current.circuit_breaker_cooldown_seconds),
+            'record_enforce_events': data.get('record_enforce_events', current.record_enforce_events),
+            'retention_days': data.get('retention_days', current.retention_days),
+        }
+        try:
+            validated = validate_decim_settings(merged)
+        except ValueError as e:
+            return jsonify({'success': False, 'error': str(e)}), 400
+        old = {key: getattr(current, key) for key in merged}
+        save_decim_settings(validated)
+        for key in merged:
+            before = old[key]
+            after = getattr(validated, key)
+            _audit_setting_change(f'decim_safety.{key}', before, after)
+        return jsonify({'success': True, 'settings': _decim_settings_public(validated)})
+
+    return jsonify({'settings': _decim_settings_public(load_decim_settings())})
 
 
 @settings_bp.route('/api/settings/message-wrapper', methods=['PUT'])
@@ -725,6 +853,21 @@ def api_max_tool_iterations():
         return jsonify({'success': True, 'value': value})
     val = db.get_setting('max_tool_iterations', str(config.AGENT_MAX_TOOL_ITERATIONS))
     return jsonify({'value': int(val)})
+
+
+@settings_bp.route('/api/settings/max-goal-nudges', methods=['GET', 'PUT'])
+def api_max_goal_nudges():
+    """Get or set the maximum goal-continuation nudges per active `/goal` (0-50)."""
+    from backend.active_goal import normalize_max_goal_nudges
+    from models.db import db
+    if request.method == 'PUT':
+        data = request.get_json() or {}
+        raw_value = data.get('value', config.AGENT_MAX_GOAL_NUDGES)
+        value = normalize_max_goal_nudges(raw_value)
+        db.set_setting('max_goal_nudges', str(value))
+        return jsonify({'success': True, 'value': value})
+    val = db.get_setting('max_goal_nudges', str(config.AGENT_MAX_GOAL_NUDGES))
+    return jsonify({'value': normalize_max_goal_nudges(val)})
 
 
 @settings_bp.route('/api/settings/events-dispatch', methods=['GET', 'PUT'])
@@ -860,6 +1003,8 @@ def api_get_general_settings():
         'public_history': db.get_setting('public_history', '0') == '1',
         'long_running_guard_enabled': db.get_setting('long_running_guard_enabled',
                                                      '1' if config.LONG_RUNNING_GUARD_ENABLED else '0') == '1',
+        'root_fs_scan_guard_enabled': db.get_setting('root_fs_scan_guard_enabled',
+                                                     '1' if config.ROOT_FS_SCAN_GUARD_ENABLED else '0') == '1',
         'message_wrapper_enabled': db.get_setting('message_wrapper_enabled', '1') == '1',
         'agent_timeout_retries': int(db.get_setting('agent_timeout_retries', str(config.AGENT_TIMEOUT_RETRIES))),
         'llm_max_retries': int(db.get_setting('llm_max_retries', '5')),
@@ -868,6 +1013,7 @@ def api_get_general_settings():
         'max_concurrent_llm_global': int(db.get_setting('max_concurrent_llm_global', '1')),
         'agent_queue_workers': int(db.get_setting('agent_queue_workers', str(config.AGENT_QUEUE_WORKERS))),
         'max_tool_iterations': int(db.get_setting('max_tool_iterations', str(config.AGENT_MAX_TOOL_ITERATIONS))),
+        'max_goal_nudges': int(db.get_setting('max_goal_nudges', str(config.AGENT_MAX_GOAL_NUDGES))),
         'agent_sidebar_limit': int(db.get_setting('agent_sidebar_limit', str(config.AGENT_SIDEBAR_LIMIT))),
         'theme': db.get_setting('theme', 'system'),
         'default_model_fallback_id': db.get_setting('default_model_fallback_id', ''),
@@ -1001,6 +1147,16 @@ def api_batch_save():
         except (ValueError, TypeError) as e:
             errors.append(f'max_tool_iterations: {e}')
 
+    # Max Goal Nudges
+    if 'max_goal_nudges' in settings:
+        try:
+            from backend.active_goal import normalize_max_goal_nudges
+            value = normalize_max_goal_nudges(settings['max_goal_nudges'])
+            db.set_setting('max_goal_nudges', str(value))
+            results['max_goal_nudges'] = value
+        except (ValueError, TypeError) as e:
+            errors.append(f'max_goal_nudges: {e}')
+
     # Agent Sidebar Limit
     if 'agent_sidebar_limit' in settings:
         try:
@@ -1027,6 +1183,18 @@ def api_batch_save():
             results['long_running_guard_enabled'] = enabled == '1'
         except (ValueError, TypeError) as e:
             errors.append(f'long_running_guard_enabled: {e}')
+
+    # Root Filesystem Scan Guard
+    if 'root_fs_scan_guard_enabled' in settings:
+        try:
+            enabled = '1' if settings['root_fs_scan_guard_enabled'] else '0'
+            old_val = db.get_setting('root_fs_scan_guard_enabled',
+                                     '1' if config.ROOT_FS_SCAN_GUARD_ENABLED else '0')
+            db.set_setting('root_fs_scan_guard_enabled', enabled)
+            _audit_setting_change('root_fs_scan_guard_enabled', old_val, enabled)
+            results['root_fs_scan_guard_enabled'] = enabled == '1'
+        except (ValueError, TypeError) as e:
+            errors.append(f'root_fs_scan_guard_enabled: {e}')
 
     # Message Wrapper
     if 'message_wrapper_enabled' in settings:
@@ -1182,49 +1350,149 @@ def api_batch_save():
 
 @settings_bp.route('/api/settings/users', methods=['GET'])
 def api_list_users():
-    """List all users with optional status filter.
+    """List users with search, status filter, sort, status counts and per-user contacts/agents/tags.
 
     Query params:
         filter: all | approved | blocked | pending  (default: all)
-        limit: int (default: 50)
+        q: free-text search over name, id, notes and contact values
+        sort: active | name | newest  (default: active)
+        limit: int (default: 50, max 200)
         offset: int (default: 0)
     """
     status_filter = request.args.get('filter', 'all')
-    limit = min(int(request.args.get('limit', 50)), 200)
+    query = (request.args.get('q') or '').strip()
+    sort = request.args.get('sort', 'active')
+    limit = max(1, min(int(request.args.get('limit', 50)), 200))
     offset = max(int(request.args.get('offset', 0)), 0)
+
+    order_by = {
+        'active': 'u.last_active_at DESC NULLS LAST',
+        'name': 'u.name COLLATE NOCASE ASC',
+        'newest': 'u.created_at DESC',
+    }.get(sort, 'u.last_active_at DESC NULLS LAST')
+
+    base_conditions = ['u.deleted_at IS NULL']
+    base_params = []
+    if query:
+        like = '%' + query + '%'
+        base_conditions.append(
+            "(u.name LIKE ? OR u.id LIKE ? OR u.notes LIKE ? OR EXISTS ("
+            "SELECT 1 FROM user_contacts c WHERE c.user_id = u.id AND c.deleted_at IS NULL "
+            "AND (c.value LIKE ? OR c.external_user_id LIKE ?)))")
+        base_params.extend([like] * 5)
+
+    conditions = list(base_conditions)
+    if status_filter == 'approved':
+        conditions.append('u.is_approved = 1 AND u.blocked_at IS NULL')
+    elif status_filter == 'blocked':
+        conditions.append('u.is_approved = 2')
+    elif status_filter == 'pending':
+        conditions.append('(u.is_approved = 0 OR u.is_approved IS NULL)')
+
+    where = ' AND '.join(conditions)
+    base_where = ' AND '.join(base_conditions)
 
     with db._connect() as conn:
         conn.row_factory = db._row_factory
         cursor = conn.cursor()
-
-        conditions = ['u.deleted_at IS NULL']
-        params = []
-
-        if status_filter == 'approved':
-            conditions.append('u.is_approved = 1 AND u.blocked_at IS NULL')
-        elif status_filter == 'blocked':
-            conditions.append('u.is_approved = 2')
-        elif status_filter == 'pending':
-            conditions.append('(u.is_approved = 0 OR u.is_approved IS NULL)')
-
-        where = ' AND '.join(conditions)
 
         cursor.execute(f"""
             SELECT u.*,
                    (SELECT COUNT(*) FROM user_audit_log WHERE user_id = u.id AND action IN ('blocked', 'unblocked')) as audit_count
             FROM users u
             WHERE {where}
-            ORDER BY u.last_active_at DESC NULLS LAST
+            ORDER BY {order_by}
             LIMIT ? OFFSET ?
-        """, params + [limit, offset])
-
+        """, base_params + [limit, offset])
         users = [dict(r) for r in cursor.fetchall()]
 
-        # Count total for pagination
-        cursor.execute(f'SELECT COUNT(*) FROM users u WHERE {where}', params)
+        cursor.execute(f'SELECT COUNT(*) FROM users u WHERE {where}', base_params)
         total = cursor.fetchone()[0]
 
-    return jsonify({'users': users, 'total': total, 'limit': limit, 'offset': offset})
+        # Counts per status for the filter chips (same search, ignoring the status filter)
+        cursor.execute(f"""
+            SELECT COUNT(*) AS all_count,
+                   COALESCE(SUM(CASE WHEN u.is_approved = 1 AND u.blocked_at IS NULL THEN 1 ELSE 0 END), 0) AS approved,
+                   COALESCE(SUM(CASE WHEN u.is_approved = 0 OR u.is_approved IS NULL THEN 1 ELSE 0 END), 0) AS pending,
+                   COALESCE(SUM(CASE WHEN u.is_approved = 2 THEN 1 ELSE 0 END), 0) AS blocked
+            FROM users u WHERE {base_where}
+        """, base_params)
+        row = cursor.fetchone()
+        counts = {'all': row['all_count'], 'approved': row['approved'],
+                  'pending': row['pending'], 'blocked': row['blocked']}
+
+        # Enrich this page with contacts / agents / tags (three small queries, not N+1)
+        for u in users:
+            u['contacts'], u['agents'], u['tags'] = [], [], []
+        if users:
+            by_id = {u['id']: u for u in users}
+            marks = ','.join('?' for _ in users)
+            ids = list(by_id)
+            cursor.execute(
+                "SELECT user_id, channel_type, value, external_user_id, is_primary FROM user_contacts "
+                "WHERE deleted_at IS NULL AND user_id IN (" + marks + ") ORDER BY is_primary DESC, id ASC", ids)
+            for r in cursor.fetchall():
+                by_id[r['user_id']]['contacts'].append({
+                    'channel_type': r['channel_type'], 'value': r['value'],
+                    'external_user_id': r['external_user_id'], 'is_primary': bool(r['is_primary'])})
+            cursor.execute(
+                "SELECT ua.user_id, ua.agent_id, a.name AS agent_name FROM user_agents ua "
+                "LEFT JOIN agents a ON a.id = ua.agent_id "
+                "WHERE ua.removed_at IS NULL AND ua.user_id IN (" + marks + ")", ids)
+            for r in cursor.fetchall():
+                by_id[r['user_id']]['agents'].append({'id': r['agent_id'], 'name': r['agent_name'] or r['agent_id']})
+            cursor.execute(
+                "SELECT user_id, tag FROM user_tags WHERE removed_at IS NULL AND user_id IN (" + marks + ")", ids)
+            for r in cursor.fetchall():
+                by_id[r['user_id']]['tags'].append(r['tag'])
+
+    return jsonify({'users': users, 'total': total, 'counts': counts, 'limit': limit, 'offset': offset})
+
+
+@settings_bp.route('/api/settings/users/<user_id>/approve', methods=['POST'])
+def api_approve_user(user_id):
+    """Approve a pending user (a blocked user is unblocked instead)."""
+    user = db.get_user(user_id)
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    if user.get('is_approved') == 2:
+        ok = db.unblock_user(user_id, actor_type='admin', actor_id='web_admin')
+    else:
+        ok = db.update_user(user_id, {'is_approved': 1}, actor_type='admin', actor_id='web_admin')
+    if ok:
+        audit.log_user_management(user_id='admin', target_user=user_id, action='approve', ip=request.remote_addr or '')
+        return jsonify({'success': True, 'user_id': user_id})
+    return jsonify({'error': 'Could not approve user'}), 400
+
+
+@settings_bp.route('/api/settings/users/<user_id>', methods=['PUT'])
+def api_update_user(user_id):
+    """Edit a user's display name and notes."""
+    data = request.get_json() or {}
+    updates = {}
+    if 'name' in data:
+        name = str(data.get('name') or '').strip()
+        if not name:
+            return jsonify({'error': 'Name cannot be empty'}), 400
+        updates['name'] = name[:200]
+    if 'notes' in data:
+        updates['notes'] = str(data.get('notes') or '')[:5000]
+    if not updates:
+        return jsonify({'error': 'Nothing to update'}), 400
+    if not db.get_user(user_id):
+        return jsonify({'error': 'User not found'}), 404
+    if db.update_user(user_id, updates, actor_type='admin', actor_id='web_admin'):
+        return jsonify({'success': True, 'user_id': user_id})
+    return jsonify({'error': 'Could not update user'}), 400
+
+
+@settings_bp.route('/api/settings/users/<user_id>', methods=['DELETE'])
+def api_delete_user(user_id):
+    """Soft-delete a user (hidden from the list; history kept)."""
+    if db.soft_delete_user(user_id, actor_type='admin', actor_id='web_admin'):
+        audit.log_user_management(user_id='admin', target_user=user_id, action='delete', ip=request.remote_addr or '')
+        return jsonify({'success': True, 'user_id': user_id})
+    return jsonify({'error': 'User not found'}), 404
 
 
 @settings_bp.route('/api/admin/blocked-users', methods=['GET'])

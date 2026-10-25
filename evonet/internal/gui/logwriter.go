@@ -4,108 +4,88 @@ package gui
 
 import (
 	"os"
-	"strings"
-	"sync"
-	"time"
+	"sync/atomic"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/widget"
 )
 
-const maxLines = 1000
-
 // LogWriter implements io.Writer and feeds text to a Fyne RichText widget.
-// It also mirrors output to stderr. Updates are batched (100ms) and
-// dispatched to the main goroutine via fyne.Do to satisfy macOS/Cocoa.
+// It also mirrors output to stderr. Updates are coalesced (see flushInterval)
+// and dispatched to the main goroutine via fyne.Do to satisfy macOS/Cocoa.
 // Text is rendered in dark green via a custom theme color name (colorNameLogText).
+//
+// Unlike the previous implementation, the background flusher is event-driven:
+// it blocks while there is nothing to render instead of waking on a fixed
+// 100 ms ticker, which removes the idle wakeups that made macOS report the app
+// as using significant energy.
 type LogWriter struct {
+	buf     *logBuffer
+	flusher *logFlusher
 	entry   *widget.RichText
 	scroll  *container.Scroll
-	mu      sync.Mutex
-	lines   []string
-	dirty   bool
-	once    sync.Once
-	closeCh chan struct{}
+	epoch   atomic.Uint64
 }
 
 func newLogWriter(entry *widget.RichText, scroll *container.Scroll) *LogWriter {
 	lw := &LogWriter{
-		entry:   entry,
-		scroll:  scroll,
-		closeCh: make(chan struct{}),
+		buf:    &logBuffer{},
+		entry:  entry,
+		scroll: scroll,
 	}
-	go lw.flusher()
+	lw.flusher = newLogFlusher(lw.buf, flushInterval, lw.render)
 	return lw
 }
 
 func (lw *LogWriter) Write(p []byte) (int, error) {
 	os.Stderr.Write(p) //nolint
 
-	incoming := strings.Split(strings.TrimRight(string(p), "\n"), "\n")
-	lw.mu.Lock()
-	for _, line := range incoming {
-		if line != "" {
-			lw.lines = append(lw.lines, line)
-		}
-	}
-	if len(lw.lines) > maxLines {
-		lw.lines = lw.lines[len(lw.lines)-maxLines:]
-	}
-	lw.dirty = true
-	lw.mu.Unlock()
+	lw.buf.append(p)
+	lw.flusher.notifyWrite()
 	return len(p), nil
 }
 
-func (lw *LogWriter) flusher() {
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			lw.mu.Lock()
-			if !lw.dirty {
-				lw.mu.Unlock()
-				continue
-			}
-			text := strings.Join(lw.lines, "\n")
-			lw.dirty = false
-			lw.mu.Unlock()
-
-			// fyne.Do queues onto the main goroutine — required on macOS/Cocoa
-			fyne.Do(func() {
-				lw.entry.Segments = []widget.RichTextSegment{
-					&widget.TextSegment{
-						Style: widget.RichTextStyle{
-							ColorName: colorNameLogText,
-							Inline:    true,
-						},
-						Text: text,
-					},
-				}
-				lw.entry.Refresh()
-				lw.scroll.ScrollToBottom()
-			})
-		case <-lw.closeCh:
+// render pushes coalesced text to the RichText widget. It is called from the
+// flusher goroutine and hops to the Fyne main goroutine via fyne.Do, which is
+// required on macOS/Cocoa.
+func (lw *LogWriter) render(text string) {
+	epoch := lw.epoch.Load()
+	fyne.Do(func() {
+		if lw.epoch.Load() != epoch {
 			return
 		}
-	}
+		lw.entry.Segments = []widget.RichTextSegment{
+			&widget.TextSegment{
+				Style: widget.RichTextStyle{
+					ColorName: colorNameLogText,
+					Inline:    true,
+				},
+				Text: text,
+			},
+		}
+		lw.entry.Refresh()
+		lw.scroll.ScrollToBottom()
+	})
 }
 
 // Clear removes all log lines immediately and updates the display.
 func (lw *LogWriter) Clear() {
-	lw.mu.Lock()
-	lw.lines = nil
-	lw.dirty = true
-	lw.mu.Unlock()
+	lw.buf.clear()
+	epoch := lw.epoch.Add(1)
 
 	fyne.Do(func() {
+		if lw.epoch.Load() != epoch {
+			return
+		}
 		lw.entry.Segments = nil
 		lw.entry.Refresh()
 		lw.scroll.ScrollToTop()
 	})
 }
 
+// close stops the background flusher and waits for it to exit. Safe to call
+// more than once (e.g. navigating away and then closing the window).
 func (lw *LogWriter) close() {
-	lw.once.Do(func() { close(lw.closeCh) })
+	lw.flusher.close()
 }

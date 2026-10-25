@@ -62,6 +62,14 @@ def dashboard_usage_card(sdk):
                 total_cost += c
                 priced = True
 
+        # hourly buckets for the sparkline (oldest first), padded so every hour of the last 24 is present
+        buckets = {r['bucket']: int(r.get('total_tokens') or 0) for r in usage_db.series(since, 'hour')}
+        now = datetime.now(timezone.utc)
+        series = []
+        for h in range(23, -1, -1):
+            key = (now - timedelta(hours=h)).strftime('%Y-%m-%dT%H')
+            series.append(buckets.get(key, 0))
+
         total_tokens = totals.get('total_tokens', 0)
         cost_label = f"${total_cost:,.2f}" if priced else "n/a"
         return {
@@ -71,6 +79,7 @@ def dashboard_usage_card(sdk):
             'feature_card': {
                 'count': f"{total_tokens:,}",
                 'detail': f"{totals.get('calls', 0)} calls · est. {cost_label}",
+                'series': series,
                 'border_color': 'indigo',
                 'bg_color': 'indigo',
                 'icon_color': 'indigo',

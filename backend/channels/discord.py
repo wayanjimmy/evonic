@@ -20,7 +20,7 @@ import time
 import threading
 from typing import Dict, Any, Optional, List, Tuple
 
-from backend.channels.base import BaseChannel, strip_system_tags
+from backend.channels.base import BaseChannel, strip_system_tags, unique_attachment_path
 
 _logger = logging.getLogger(__name__)
 
@@ -356,12 +356,10 @@ class DiscordChannel(BaseChannel):
                                 "✅ You're now approved! Welcome aboard. How can I help you today?"
                             )
                     return
-                await message.channel.send(
-                    "❌ That pairing code is invalid or has expired. "
-                    "Please ask the administrator for a new one."
-                )
-                return
-            # No pairing code — create a pending approval once and prompt the user.
+                # Unmatched code — fall through so the sender is registered as a
+                # pending approval and stays approvable from the modal.
+            # No live pairing code (or an unmatched one) — make sure the sender
+            # has a pending approval visible in the channel modal.
             existing = db.get_pending_approvals(channel_id)
             already_pending = any(p.get('external_user_id') == user_id for p in existing)
             if not already_pending:
@@ -371,6 +369,11 @@ class DiscordChannel(BaseChannel):
                         "👋 You're not yet approved to chat here. "
                         "Please ask the administrator for a pairing code, then send it in this chat."
                     )
+            elif raw_code:
+                await message.channel.send(
+                    "❌ That pairing code is invalid or has expired. "
+                    "Please ask the administrator for a new one."
+                )
             return
 
         # Establish session early — needed for attachment storage paths.
@@ -392,7 +395,20 @@ class DiscordChannel(BaseChannel):
 
         # Respect the per-session bot toggle.
         if not db.is_session_bot_enabled(session_id, agent_id=agent_id):
-            db.add_chat_message(session_id, 'user', text or '[Image]', agent_id=agent_id)
+            stored = text or '[Image]'
+            message_id = db.add_chat_message(session_id, 'user', stored, agent_id=agent_id)
+            message_id = message_id if type(message_id) in (int, str) else None
+            from models.chatlog import chatlog_manager
+            chatlog_manager.get(agent_id, session_id).append({
+                'type': 'user', 'session_id': session_id, 'content': stored,
+                'sender_id': user_id, 'message_id': message_id,
+            })
+            from backend.event_stream import event_stream
+            event_stream.emit('message_received', {
+                'agent_id': agent_id, 'session_id': session_id,
+                'external_user_id': user_id, 'channel_id': channel_id,
+                'message': stored, 'message_id': message_id, 'role': 'user',
+            })
             return
 
         # Include the replied-to bot message as context, when present.
@@ -498,8 +514,7 @@ class DiscordChannel(BaseChannel):
             try:
                 safe = _sanitize_filename(original_filename)
                 target_dir = os.path.join('data', 'attachments', agent_id, session_id)
-                os.makedirs(target_dir, exist_ok=True)
-                target_path = os.path.join(target_dir, f"{int(time.time())}_{safe}")
+                target_path = unique_attachment_path(target_dir, safe)
                 await att.save(target_path)
                 real_size = size_bytes or (
                     os.path.getsize(target_path) if os.path.isfile(target_path) else 0
@@ -764,7 +779,7 @@ class DiscordChannel(BaseChannel):
             async def approve(self, interaction, button):
                 from backend.agent_runtime.approval import approval_registry
                 pending.pop(approval_id, None)
-                ok = approval_registry.resolve(approval_id, 'approve')
+                ok = approval_registry.resolve(approval_id, 'approve', resolved_by='user:discord')
                 msg = 'Approved by user.' if ok else 'This approval has already been resolved or expired.'
                 await interaction.response.edit_message(content=msg, view=None)
 
@@ -772,7 +787,7 @@ class DiscordChannel(BaseChannel):
             async def reject(self, interaction, button):
                 from backend.agent_runtime.approval import approval_registry
                 pending.pop(approval_id, None)
-                ok = approval_registry.resolve(approval_id, 'reject')
+                ok = approval_registry.resolve(approval_id, 'reject', resolved_by='user:discord')
                 msg = 'Rejected by user.' if ok else 'This approval has already been resolved or expired.'
                 await interaction.response.edit_message(content=msg, view=None)
 

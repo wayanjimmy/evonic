@@ -11,8 +11,8 @@
     if (!container) return;
 
     var STYLES = {
-        error:   'border-t border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950 text-red-700 dark:text-red-300',
-        warning: 'border-t border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950 text-amber-700 dark:text-amber-300',
+        error:   'ev-banner ev-banner-danger',
+        warning: 'ev-banner ev-banner-warn',
     };
 
     function updateHeaderHeight() {
@@ -54,7 +54,7 @@
     window.dismissSystemAlert = function(category, btn) {
         fetch('/api/system/alerts/' + encodeURIComponent(category) + '/dismiss', {method: 'POST'})
             .then(function() {
-                var banner = btn.closest('[class*="border-t"]');
+                var banner = btn.closest('.ev-banner');
                 if (banner) banner.remove();
                 updateHeaderHeight();
             });

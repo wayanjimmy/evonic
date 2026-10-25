@@ -1,0 +1,292 @@
+{
+  "id": "image-generator",
+  "name": "Image Generator",
+  "version": "1.1.0",
+  "description": "Generates image artifacts through configured cloud or approved local providers. Provider selection is explicit or uses the configured default. Supports square, portrait (768x1024, 768x1344, 832x1248), and landscape (1024x768, 1344x768, 1248x832) sizes.",
+  "brief": "Use the `image-generator` skill only after an administrator enables it and configures an approved provider. The `list_providers` tool reports which providers are currently available and enabled. The `generate_image` tool accepts an explicit provider or uses the configured default provider.",
+  "author": "Evonic",
+  "tools_file": "tools.json",
+  "lazy_tools": true,
+  "default_enabled": false,
+  "variables": [
+    {
+      "name": "default_provider",
+      "label": "Default Provider",
+      "type": "select",
+      "default": "",
+      "description": "Provider ID used when generate_image does not specify a provider. It must identify an enabled provider from the provider registry.",
+      "section": "global",
+      "options": [
+        {
+          "value": "google-gemini",
+          "label": "Google Gemini"
+        },
+        {
+          "value": "openrouter",
+          "label": "OpenRouter"
+        },
+        {
+          "value": "automatic1111",
+          "label": "AUTOMATIC1111"
+        },
+        {
+          "value": "comfyui",
+          "label": "ComfyUI"
+        },
+        {
+          "value": "mock",
+          "label": "Deterministic Mock"
+        }
+      ],
+      "empty_label": "\u2014 No default provider \u2014"
+    },
+    {
+      "name": "automatic1111_enabled",
+      "label": "Enabled",
+      "type": "boolean",
+      "default": false,
+      "description": "Enable this provider after configuring its approved local endpoint.",
+      "provider": "automatic1111"
+    },
+    {
+      "name": "comfyui_enabled",
+      "label": "Enabled",
+      "type": "boolean",
+      "default": false,
+      "description": "Enable this provider after configuring its approved local endpoint and workflow.",
+      "provider": "comfyui"
+    },
+    {
+      "name": "google_gemini_enabled",
+      "label": "Enabled",
+      "type": "boolean",
+      "default": true,
+      "description": "Enable Google Gemini image generation using the configured credential and model.",
+      "provider": "google-gemini"
+    },
+    {
+      "name": "mock_enabled",
+      "label": "Enabled",
+      "type": "boolean",
+      "default": false,
+      "description": "Development and test only. Enable the deterministic mock provider explicitly.",
+      "provider": "mock"
+    },
+    {
+      "name": "automatic1111_endpoint",
+      "label": "AUTOMATIC1111 Endpoint",
+      "type": "string",
+      "default": "",
+      "description": "Administrator-approved base URL for the local AUTOMATIC1111-compatible API. Agents cannot override it.",
+      "provider": "automatic1111"
+    },
+    {
+      "name": "automatic1111_timeout_seconds",
+      "label": "AUTOMATIC1111 Timeout (seconds)",
+      "type": "number",
+      "default": 60,
+      "description": "Bounded request timeout for the local provider, from 1 through 120 seconds.",
+      "provider": "automatic1111",
+      "advanced": true
+    },
+    {
+      "name": "automatic1111_steps",
+      "label": "AUTOMATIC1111 Default Steps",
+      "type": "number",
+      "default": 20,
+      "description": "Administrator-controlled fixed generation step count for the local provider, from 1 through 100.",
+      "provider": "automatic1111",
+      "advanced": true
+    },
+    {
+      "name": "comfyui_endpoint",
+      "label": "ComfyUI Endpoint",
+      "type": "string",
+      "default": "",
+      "description": "Base URL for the approved local ComfyUI API.",
+      "provider": "comfyui"
+    },
+    {
+      "name": "comfyui_workflow_template",
+      "label": "ComfyUI Workflow Template",
+      "type": "string",
+      "default": "default",
+      "description": "Name of the administrator-approved workflow template used for image generation. Resolves to a JSON file in the skill's providers/workflows directory; spaces in the name are allowed.",
+      "provider": "comfyui"
+    },
+    {
+      "name": "comfyui_timeout_seconds",
+      "label": "ComfyUI Job Timeout (seconds)",
+      "type": "number",
+      "default": 600,
+      "description": "Maximum time to wait for a ComfyUI job to finish, from 1 through 1800 seconds.",
+      "provider": "comfyui",
+      "advanced": true
+    },
+    {
+      "name": "comfyui_polling_interval_seconds",
+      "label": "ComfyUI Polling Interval (seconds)",
+      "type": "number",
+      "default": 2,
+      "description": "Interval used to check asynchronous ComfyUI jobs, from 1 through 10 seconds.",
+      "provider": "comfyui",
+      "advanced": true
+    },
+    {
+      "name": "comfyui_api_key",
+      "label": "ComfyUI API Key",
+      "type": "secret",
+      "default": "",
+      "description": "Optional credential for ComfyUI deployments that require API authentication.",
+      "provider": "comfyui",
+      "advanced": true
+    },
+    {
+      "name": "google_gemini_api_key",
+      "label": "Google Gemini API Key",
+      "type": "secret",
+      "default": "",
+      "description": "Write-only Google Generative Language API credential used only by the approved Google Gemini provider.",
+      "provider": "google-gemini"
+    },
+    {
+      "name": "google_gemini_model",
+      "label": "Google Gemini Model",
+      "type": "string",
+      "default": "gemini-2.5-flash-image",
+      "choices": [
+        "gemini-2.5-flash-image",
+        "gemini-3.1-flash-image"
+      ],
+      "description": "Approved Google image-generation model.",
+      "provider": "google-gemini"
+    },
+    {
+      "name": "google_gemini_timeout_seconds",
+      "label": "Google Gemini Timeout (seconds)",
+      "type": "number",
+      "default": 60,
+      "description": "Bounded request timeout for Google Gemini, from 1 through 120 seconds.",
+      "provider": "google-gemini",
+      "advanced": true
+    },
+    {
+      "name": "openrouter_api_key",
+      "label": "OpenRouter API Key",
+      "type": "secret",
+      "default": "",
+      "description": "Write-only OpenRouter API key used only by the OpenRouter provider.",
+      "provider": "openrouter"
+    },
+    {
+      "name": "openrouter_model",
+      "label": "OpenRouter Model",
+      "type": "string",
+      "default": "google/gemini-2.5-flash-image",
+      "description": "Image model used when the agent does not pick one, e.g. google/gemini-2.5-flash-image, openai/gpt-image-1, black-forest-labs/flux.2-pro.",
+      "provider": "openrouter"
+    },
+    {
+      "name": "openrouter_allowed_models",
+      "label": "Other Allowed OpenRouter Models",
+      "type": "string",
+      "default": "",
+      "description": "Comma-separated model IDs an agent may request besides the default. Leave empty to allow only the default model.",
+      "provider": "openrouter",
+      "advanced": true
+    },
+    {
+      "name": "openrouter_timeout_seconds",
+      "label": "OpenRouter Timeout (seconds)",
+      "type": "number",
+      "default": 90,
+      "description": "Bounded request timeout for OpenRouter, from 1 through 120 seconds.",
+      "provider": "openrouter",
+      "advanced": true
+    },
+    {
+      "name": "max_images_per_request",
+      "label": "Maximum Images Per Request",
+      "type": "number",
+      "default": 1,
+      "description": "Upper limit for images requested in a single generation call (1 through 10).",
+      "section": "global"
+    },
+    {
+      "name": "requests_per_minute",
+      "label": "Requests Per Minute Per Agent",
+      "type": "number",
+      "default": 6,
+      "description": "Per-agent rolling request cap. Set from 1 through 60 for a controlled pilot.",
+      "section": "global",
+      "advanced": true
+    },
+    {
+      "name": "max_concurrent_requests",
+      "label": "Maximum Concurrent Requests Per Agent",
+      "type": "number",
+      "default": 1,
+      "description": "Per-agent in-flight generation cap (1 through 4).",
+      "section": "global",
+      "advanced": true
+    },
+    {
+      "name": "images_per_day",
+      "label": "Images Per Day Per Agent",
+      "type": "number",
+      "default": 20,
+      "description": "Per-agent UTC rolling daily image quota. Set to 0 only to disable this skill through quota.",
+      "section": "global",
+      "advanced": true
+    },
+    {
+      "name": "provider_api_key",
+      "label": "Provider API Key",
+      "type": "secret",
+      "default": "",
+      "description": "Optional provider credential. It is reserved for future production adapters and is never returned in tool results.",
+      "provider": "mock",
+      "advanced": true
+    }
+  ],
+  "settings_ui": {
+    "layout": "provider-first",
+    "provider_selector": {
+      "label": "Provider",
+      "description": "Choose the provider you want to configure. Your unsaved values are retained while you switch providers.",
+      "empty_label": "\u2014 Select a provider \u2014",
+      "providers": [
+        {
+          "id": "google-gemini",
+          "label": "Google Gemini",
+          "description": "Cloud image generation through the configured Google Gemini model."
+        },
+        {
+          "id": "openrouter",
+          "label": "OpenRouter",
+          "description": "Cloud image generation through OpenRouter (Gemini, GPT Image, FLUX, Seedream and more) with an administrator-approved model."
+        },
+        {
+          "id": "automatic1111",
+          "label": "AUTOMATIC1111",
+          "description": "Approved local AUTOMATIC1111-compatible image generation API."
+        },
+        {
+          "id": "comfyui",
+          "label": "ComfyUI",
+          "description": "Local ComfyUI image generation using an administrator-approved workflow template."
+        },
+        {
+          "id": "mock",
+          "label": "Deterministic Mock",
+          "description": "Development-only provider for predictable test images."
+        }
+      ]
+    },
+    "global_section": {
+      "id": "image-generator-defaults",
+      "label": "Global Image Generator Defaults",
+      "description": "These preferences apply to Image Generator regardless of the provider you are configuring."
+    }
+  }
+}

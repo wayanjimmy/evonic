@@ -1,5 +1,115 @@
 # Changelog
 
+## [Unreleased]
+
+## [1.5.6] - 2026-10-24
+
+### Features
+
+- Added a quick workplace switcher in the chat header with a searchable picker for large workplace lists, switch-context handling, and an opt-in `switch_workplace` tool that lets an agent move itself between workplaces. Portals can now be created from existing workplaces only.
+- Redesigned model management: model cards with a one-click endpoint ping, deleting a provider together with its models, AI brand marks in the model switcher, and per-session model switching from the state panel.
+- Chat now shows who decided each safety verdict in the thinking timeline, including the triggering verdict, flagged categories, and the real decision maker behind an approval (web, Telegram, WhatsApp, Discord, agent, or timeout).
+- Added configurable TOTP two-factor authentication.
+- Safety: one-click provider endpoint connectivity test, a DMSS activity detail modal with redacted command preview, and auto-saving policy and DMSS configuration with a redesigned HMADS and DMSS tab layout.
+- Runtime: request budget preflight, active session monitors shown in the state panel, and a rendered Markdown plan modal with an editable tab.
+- Added portrait and landscape sizes to all image-generator providers.
+- Evonet: a single Portal card with Workplace and Path panels, and icons per workplace kind.
+
+### Improvements
+
+- Chat and state panel: workplace switched divider, connection notice above the composer, ask_user card docking, collapsed long completed-task lists, improved chat rendering, and refreshed update-banner styling.
+- Settings: aligned Variables and Plugin Settings headers, tidier Models & Routing and Vision rows, cleaner combobox focus ring, and a real input field for the `Other` ask_user answer.
+- Evonet: removed idle GUI polling, cancel in-flight dial on shutdown, and prevented server-switch UI stalls.
+
+### Bug Fixes
+
+- Fixed session state not loading on initial chat open, CMP being dropped by the plan command, stale slash-command hints, and the workplace header chip not following an agent-initiated switch.
+- Fixed currency amounts being mangled by the KaTeX rendering pipeline in chat.
+- Fixed structured tool error rendering and binary artifact writes that exceeded the Evonet read limit.
+- Kanban tasks now require an assignee before they can be started.
+- Monitor shell predicates now run with the agent's declared variables, so a probe that references a token (e.g. `$GITLAB_PAT`) no longer evaluates to an empty value and silently expires without firing.
+- Consolidated agent-variable environment resolution into one helper shared by the bash tool, the runpy tool, and monitor probes.
+
+### Tests
+
+- Added and stabilized coverage for the slash-command hint, session state handlers, chat-ui.js cache-busting, the ask_user card, chat-ui safety badges, safety-verdict provenance, and per-session model override.
+
+### Release Notes
+
+- Version 1.5.1 was never published as a separate release; its fixes are included in 1.5.6.
+
+## [1.5.0] - 2026-10-16
+
+### Features
+
+- Added a provider-neutral decision-model runtime with routing contracts, endpoint-based provider and model routing, decision profiles, built-in profile templates, activity observability, administration, and a bounded Playground for safe testing.
+- Added native SystemOne and LiquidAI decision-model integrations, and migrated DMSS to the safety command profile.
+- Added the official Claude CLI subscription provider with native image input, plus ElevenLabs text-to-speech support.
+- Added Evonet release archive targets and an event-driven GUI log flusher to reduce idle work.
+- Added panel-button edit mode for renaming and deleting actions, and made evaluation model names editable.
+
+### Improvements
+
+- Improved provider diagnostics, decision-profile save feedback, dark-mode contrast, session follow-up navigation, task-progress display, and restart-ready realtime chat notifications.
+- Enabled attachments by default for newly created agents.
+
+### Bug Fixes
+
+- Restored green coverage for model routing, decision-runtime paths, vision fallback settings, the Claude CLI provider, and decision-profile APIs.
+- Fixed OpenCode Go and Zen requests to send their session header.
+
+### Tests
+
+- Added regression coverage for decision profiles, decision runtime and routing, Claude CLI image support, vision fallback settings, panel actions, and Evonet log flushing.
+
+### Release Notes
+
+- The DMSS provider endpoint remains an administrator-configured integration. The previously accepted residual endpoint-egress risk remains subject to authenticated administrative access.
+
+## [1.4.0] - 2026-10-10
+
+### Features
+
+- Refreshed the application experience across chat, agent, session, evaluation, dashboard, user, and settings pages with a new dark palette, mobile navigation, keyboard shortcuts, toasts, comboboxes, state panels, and generated default agent avatars.
+- Added System > Safety as a consolidated configuration surface, including persistent policy controls, a provider-neutral decision-model safety guard, provider health status, activity telemetry, and a bounded DMSS diagnostic tester with ready-to-submit sample payloads.
+- Added image generation through the ComfyUI provider, including portrait and landscape sizes, workflow-template support, prompt injection, and provider discovery.
+- Added a text-to-speech skill supporting Google Gemini, OpenAI, and OpenRouter providers.
+- Added durable `/goal` state visible to agents, semantic session-summary compaction, active monitor conditions in chat state, and proactive context compaction based on model capacity and provider token usage.
+- Added a session state header, theme presets, refreshed Safety and Users settings, and other usability improvements to the administration interface.
+
+### Bug Fixes
+
+- Fixed direct-channel pairing approval, increased pairing-code entropy, and stabilized pairing tests.
+- Fixed stale agent turns and Kanban task-resume handling; paused Kanban boards now prevent scans.
+- Fixed WhatsApp bridge shutdown and restart handling, dark-mode disconnect banners, structured tool-error rendering, session-summary editing, binary artifact write chunking, and image artifact filename collisions.
+- Fixed ComfyUI workflow-name handling and metadata generation; added cross-platform launcher locking and Windows virtual-environment detection.
+- Improved DMSS settings and diagnostic behavior, including endpoint controls, dark-mode presentation, failure-path handling, and KPI spacing.
+- Improved tool-result renderer dependency loading and Explorer compatibility with shell `rg` wrappers.
+
+### Tests
+
+- Expanded Safety and DMSS API/UI coverage, including diagnostic timeout, HTTP error, malformed-response, rate-limit, and empty-payload paths.
+- Added regression coverage for pairing, renderer tool-result helpers, theme-aware disconnect banners, and Kanban task resume behavior.
+
+### Release Notes
+
+- The DMSS provider endpoint remains an administrator-configured integration. The residual endpoint egress risk was reviewed and explicitly accepted for this release because changes require authenticated administrative access.
+
+## [1.3.0] - 2026-10-05
+
+### Features
+
+- Kanban board: task title text now flashes solid yellow and fades back to its original color (1s default) every time the assigned agent calls a tool, driven by the durable `kanban` realtime (SSE) channel.
+- Plugin detail pages now turn every `<slug>_tab.html` a plugin ships in its `templates/` directory into an extra tab (label = the humanised slug) and call `window.tabInit_<slug>()` when the tab is opened, so plugins can add an admin page to their own detail view without a navbar entry or a core change. Used by the tiyasancloud *Manage* tab.
+
+### Bug Fixes
+
+- Fixed the chat typography hierarchy: with a browser default font size below 16px, the user's own message and the composer shrank to the size of the agent reasoning/timeline lines (or smaller), so the reasoning text looked larger than the user's input. Both tiers are now sized in rem (`0.9375rem` / `0.6875rem`), keeping the ratio identical at every root font size.
+- LLM clients now retry once on their configured fallback model when the primary call fails. Shared callers (task and CMP classifiers, plugin helpers, dashboard enhancements) previously received the raw primary error whenever they did not run through the agent runtime.
+- Set the global default model fallback (`default_model_fallback_id`) to `deepseek/deepseek-v4-flash` so the default model has somewhere to fail over to.
+- Kanban comment follow-up: a failed classifier LLM call no longer counts as "no follow-up needed". The comment stays unconsumed and is retried on the next scan instead of being silently dropped, which used to lose user comments whenever the classifier model was unavailable.
+- The root filesystem scan guard (`find /`, `tree /`) is now switchable: flip *Root Filesystem Scan Guard* in System → Settings, or set `RFS_GUARD_DISABLED=1` (`config.ROOT_FS_SCAN_GUARD_ENABLED`) to force-disable it process-wide, to run root scans without the approval prompt. It was hardcoded outside the safety pipeline, so the per-agent *Safety Checker* toggle could not silence it. The Safety Checker tooltip used to claim that disabling it meant “full autopilot — agent runs all code without approval prompts”; it now names the two system-level guards that still apply and how to control them.
+
 ## [1.2.0] - 2026-08-14
 
 ### Features

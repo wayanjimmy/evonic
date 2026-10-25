@@ -193,6 +193,44 @@ func closeClient(client *Client) {
 	}
 }
 
+func TestStopDoesNotWaitForBlockedWriter(t *testing.T) {
+	server := newWebSocketServer(t, func(conn *websocket.Conn) {
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	})
+	defer server.Close()
+
+	client := testClient(t, server.URL, time.Second, time.Second)
+	if err := client.connect(); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer closeClient(client)
+
+	client.writeMu.Lock()
+	writerLocked := make(chan struct{})
+	go func() {
+		close(writerLocked)
+		_ = client.safeWrite(client.conn, websocket.TextMessage, []byte("blocked"))
+	}()
+	<-writerLocked
+
+	stopped := make(chan struct{})
+	go func() {
+		client.Stop()
+		close(stopped)
+	}()
+
+	select {
+	case <-stopped:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("Stop waited for the writer lock")
+	}
+	client.writeMu.Unlock()
+}
+
 func TestWebSocketURLUsesConnectorPath(t *testing.T) {
 	client := testClient(t, "http://example.test/", time.Second, time.Second)
 	if got := client.wsURL(); got != "ws://example.test/ws/connector" {

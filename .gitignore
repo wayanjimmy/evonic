@@ -102,8 +102,8 @@ evaluation.db-journal
 *.db-shm
 *.db-wal
 
-# Keep seed/test database (optional - uncomment if you want to ignore)
-# seed/test_db.sqlite
+# Keep evaluator/test database (optional - uncomment if you want to ignore)
+# evaluator/test_db.sqlite
 
 # -------------------------------
 # IDEs and Editors
@@ -324,3 +324,21 @@ backend/promptpurify/model.int8.onnx
 
 # Local tooling (standalone tailwindcss binary)
 .local/
+
+# -------------------------------
+# Agent templates (per-install data, NOT source)
+# Keep the directory itself, never index its contents. The entries below are
+# shipped product fixtures; all other local templates remain untracked.
+# -------------------------------
+agent_templates/*
+!agent_templates/.gitkeep
+!agent_templates/support_triage_bot/
+!agent_templates/support_triage_bot/**
+!agent_templates/coder.json
+!agent_templates/customer_service.json
+!agent_templates/data_analyst.json
+!agent_templates/devops.json
+!agent_templates/fullstack_dev.json
+!agent_templates/pentester.json
+!agent_templates/reverse_engineer.json
+!agent_templates/sysadmin.json

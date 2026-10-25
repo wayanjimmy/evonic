@@ -31,6 +31,18 @@ class TestKanbanCreateTaskTool(unittest.TestCase):
         self._original_tool_db = tool_module.kanban_db
         tool_module.kanban_db = self.test_db
 
+        # Pin the permission setting so the suite is deterministic regardless of
+        # the ambient skill config in the developer/CI database. The tool reads
+        # `create_task_super_only` (default True) via skills_manager.
+        from unittest.mock import patch
+        from backend.skills_manager import skills_manager
+        self._config_patch = patch.object(
+            skills_manager, 'get_skill_config',
+            return_value={'create_task_super_only': True},
+        )
+        self._config_patch.start()
+        self.addCleanup(self._config_patch.stop)
+
     def tearDown(self):
         """Restore original kanban_db and clean up."""
         import plugins.kanban.db as db_module

@@ -4,28 +4,22 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Evonic</title>
+    <link rel="icon" href="{{ url_for('static', filename='favicon/favicon.ico') }}?v=1" sizes="any">
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon/favicon-32x32.png') }}?v=1" sizes="32x32">
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon/favicon-16x16.png') }}?v=1" sizes="16x16">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='favicon/apple-touch-icon.png') }}?v=1" sizes="180x180">
+    <link rel="manifest" href="{{ url_for('static', filename='favicon/site.webmanifest') }}?v=1">
+    <script src="{{ url_for('static', filename='js/theme-presets.js') }}?v=4"></script>
     <script>
-    // Anti-flash: apply theme + page background before first paint (synchronous, render-blocking)
-    (function() {
-        var t = localStorage.getItem('evonic-theme') || 'system';
-        var isDark = t === 'dark' || (t === 'system' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
-        if (isDark) {
-            document.documentElement.classList.add('dark');
-        }
-        // Set html background color inline so it paints instantly — prevents black/white flash
-        // between page navigations. style.css provides a fallback for dynamic theme toggling.
-        document.documentElement.style.backgroundColor = isDark ? '#0f172a' : '#f5f5f5';
-        // Listen for system color scheme changes when theme is 'system'
-        if (t === 'system' && window.matchMedia) {
-            window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function(e) {
-                document.documentElement.classList.toggle('dark', e.matches);
-                document.documentElement.style.backgroundColor = e.matches ? '#0f172a' : '#f5f5f5';
-            });
-        }
-    })();
+    // Anti-flash: apply theme mode + preset and the page background before first paint (synchronous, render-blocking).
+    // Non-default presets re-tint the stylesheets once they have loaded (see static/js/theme-presets.js).
+    EvTheme.boot();
     </script>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/tailwind.css') }}?v=8">
     <script src="{{ url_for('static', filename='js/ui-toggle.js') }}?v=1" defer></script>
+    <script src="{{ url_for('static', filename='js/ev-toast.js') }}?v=1"></script>
+    <script src="{{ url_for('static', filename='js/ev-combobox.js') }}?v=3"></script>
+    <script src="{{ url_for('static', filename='js/ev-shortcuts.js') }}?v=1"></script>
     <!-- jQuery stays synchronous: inline body scripts call $() at parse time -->
     <script src="{{ url_for('static', filename='js/jquery-3.7.1.min.js') }}?v=1"></script>
     <script src="{{ url_for('static', filename='js/lucide.min.js') }}?v=1" defer></script>
@@ -41,32 +35,30 @@
     </script>
     <script src="{{ url_for('static', filename='js/marked.min.js') }}?v=1" defer></script>
     <script src="{{ url_for('static', filename='js/highlight.min.js') }}?v=1" defer></script>
-    <script src="{{ url_for('static', filename='js/ui-utils.js') }}?v=1" defer></script>
-    <script src="{{ url_for('static', filename='js/realtime.js') }}?v=1" defer></script>
+    <script src="{{ url_for('static', filename='js/ui-utils.js') }}?v=3" defer></script>
+    <script src="{{ url_for('static', filename='js/realtime.js') }}?v=3" defer></script>
     <script src="{{ url_for('static', filename='js/approval-modal.js') }}?v=2" defer></script>
     <script src="{{ url_for('static', filename='js/katex.min.js') }}?v=1" defer></script>
+    <!-- Synchronous: page scripts (chat-ui.js, inline renderers) must see
+         EvMarkdownMath at parse time; it reads window.katex lazily on each call. -->
+    <script src="{{ url_for('static', filename='js/markdown-math.js') }}?v=1"></script>
     <script>
     // Global KaTeX math renderer for markdown content.
     // Used by inline scripts on agent_detail, sessions, history, etc.
+    // Currency-safe rules live in one place: js/markdown-math.js (EvMarkdownMath.render).
     function renderMathGlobal(html) {
-        if (typeof katex === 'undefined' || !html) return html || '';
-        try {
-            var codeBlocks = [];
-            var safe = html.replace(/<pre\b[^>]*>[\s\S]*?<\/pre>/gi, function (m) { codeBlocks.push(m); return '\x00CODE' + (codeBlocks.length - 1) + '\x00'; });
-            safe = safe.replace(/<code\b[^>]*>[\s\S]*?<\/code>/gi, function (m) { codeBlocks.push(m); return '\x00CODE' + (codeBlocks.length - 1) + '\x00'; });
-            safe = safe.replace(/\$\$([\s\S]*?)\$\$/g, function (m, f) { try { return katex.renderToString(f, {displayMode:true,throwOnError:false}); } catch(e) { return m; } });
-            safe = safe.replace(/(?<!\$)\$(?!\$)([\s\S]*?)(?<!\$)\$(?!\$)/g, function (m, f) { try { return katex.renderToString(f, {displayMode:false,throwOnError:false}); } catch(e) { return m; } });
-            safe = safe.replace(/\x00CODE(\d+)\x00/g, function (m, idx) { return codeBlocks[parseInt(idx,10)] || m; });
-            return safe;
-        } catch (e) {
-            return html;
+        if (!html) return html || '';
+        if (window.EvMarkdownMath && typeof window.EvMarkdownMath.render === 'function') {
+            return window.EvMarkdownMath.render(html);
         }
+        return html;
     }
     </script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=21">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=55">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/recap-prose.css') }}?v=1">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/hljs-chat.css') }}?v=1">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/agent-sidebar.css') }}?v=14">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/agent-sidebar.css') }}?v=23">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/agent-search.css') }}?v=2">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/katex.min.css') }}?v=1">
     <script>
     // CSRF double-submit: attach X-CSRF-Token header to all mutating same-origin requests
@@ -113,12 +105,14 @@
     </script>
 </head>
 <body>
+    {% macro nav_ic(paths) %}<svg class="nav-ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">{{ paths|safe }}</svg>{% endmacro %}
     <header>
+        <div class="header-glass" aria-hidden="true"></div>
         <div class="header-inner">
 	    <div class="header-left-side flex w-auto gap-4">
 
             <button id="sidebar-toggle-btn" class="sidebar-toggle-btn" onclick="toggleSidebar()" aria-label="Toggle agent sidebar" title="Toggle agent sidebar">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15,18 9,12 15,6"/></svg>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M9 3v18"/><rect class="sb-fill" x="4.2" y="4.2" width="3.6" height="15.6" rx="1.8" fill="currentColor" stroke="none"/></svg>
             </button>
             <a href="/" class="brand">
                 <img src="{{ url_for('static', filename='img/mascot.png') }}" alt="Evonic" class="brand-icon" width="28" height="28">
@@ -127,7 +121,7 @@
             </a>
 	    </div>
 
-            <button class="nav-toggle" onclick="document.querySelector('nav').classList.toggle('nav-open')" aria-label="Toggle navigation">
+            <button class="nav-toggle" onclick="toggleNav()" aria-label="Toggle navigation" aria-expanded="false" aria-controls="site-nav">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
                     <line x1="3" y1="6" x2="21" y2="6"/>
                     <line x1="3" y1="12" x2="21" y2="12"/>
@@ -135,28 +129,31 @@
                 </svg>
             </button>
 
-            <nav>
+            <nav id="site-nav" aria-label="Main">
+                <span class="nav-ink" aria-hidden="true"></span>
                 {% if session.get('authenticated') %}
-                <a href="/" class="{{ 'nav-active' if request.path == '/' else '' }}">Dashboard</a>
-                <a href="/agents" class="{{ 'nav-active' if request.path.startswith('/agents') else '' }}">Agents<span id="wa-disconnect-badge" class="hidden ml-1 text-xs px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium" title="WhatsApp channels not connected">0</span></a>
-                <a href="/sessions" class="{{ 'nav-active' if request.path.startswith('/sessions') else '' }}">Sessions</a>
-                <a href="/evaluate" class="{{ 'nav-active' if request.path.startswith('/evaluate') else '' }}">Evaluation</a>
+                <a href="/" class="{{ 'nav-active' if request.path == '/' else '' }}">{{ nav_ic('<rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/>') }}<span class="nav-label">Dashboard</span></a>
+                <a href="/agents" class="{{ 'nav-active' if request.path.startswith('/agents') else '' }}">{{ nav_ic('<path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/>') }}<span class="nav-label">Agents</span><span id="wa-disconnect-badge" class="hidden ml-1 text-xs px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium" title="WhatsApp channels not connected">0</span></a>
+                <a href="/sessions" class="{{ 'nav-active' if request.path.startswith('/sessions') else '' }}">{{ nav_ic('<path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z"/><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1"/>') }}<span class="nav-label">Sessions</span></a>
+                <a href="/evaluate" class="{{ 'nav-active' if request.path.startswith('/evaluate') else '' }}">{{ nav_ic('<path d="M10 2v7.527a2 2 0 0 1-.211.896L4.72 20.55a1 1 0 0 0 .9 1.45h12.76a1 1 0 0 0 .9-1.45l-5.069-10.127A2 2 0 0 1 14 9.527V2"/><path d="M8.5 2h7"/><path d="M7 16h10"/>') }}<span class="nav-label">Evaluation</span></a>
                 {% endif %}
-    
+                <hr class="nav-sep">
                 {% if session.get('authenticated') %}
-                <a href="/system" class="{{ 'nav-active' if request.path == '/system' or request.path.startswith('/system/') else '' }}">System</a>
-                <a href="/skills" class="{{ 'nav-active' if request.path.startswith('/skills') else '' }}">Skills</a>
-                <a href="/plugins" class="{{ 'nav-active' if request.path.startswith('/plugins') else '' }}">Plugins</a>
-                <a href="/scheduler" class="{{ 'nav-active' if request.path.startswith('/scheduler') else '' }}">Scheduler</a>
+                <a href="/system" class="{{ 'nav-active' if request.path == '/system' or request.path.startswith('/system/') else '' }}">{{ nav_ic('<rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/><path d="M6 6h.01"/><path d="M6 18h.01"/>') }}<span class="nav-label">System</span></a>
+                <a href="/skills" class="{{ 'nav-active' if request.path.startswith('/skills') else '' }}">{{ nav_ic('<path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3z"/>') }}<span class="nav-label">Skills</span></a>
+                <a href="/plugins" class="{{ 'nav-active' if request.path.startswith('/plugins') else '' }}">{{ nav_ic('<path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/>') }}<span class="nav-label">Plugins</span></a>
+                <a href="/scheduler" class="{{ 'nav-active' if request.path.startswith('/scheduler') else '' }}">{{ nav_ic('<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>') }}<span class="nav-label">Scheduler</span></a>
                 {% for _nav_item in plugin_nav_items %}
-                <a href="{{ _nav_item.path }}" class="{{ 'nav-active' if request.path.startswith(_nav_item.path) else '' }}">{{ _nav_item.label }}</a>
+                <a href="{{ _nav_item.path }}" class="{{ 'nav-active' if request.path.startswith(_nav_item.path) else '' }}">{{ nav_ic('<path d="M12 3v3"/><path d="M18.5 7.5l-2.1 2.1"/><path d="M21 14h-3"/><path d="M12 21a9 9 0 1 1 9-9"/><path d="m12 14 3-3"/>') }}<span class="nav-label">{{ _nav_item.label }}</span></a>
                 {% endfor %}
                 {% endif %}
                 {% if session.get('authenticated') %}
                 <hr class="nav-divider">
-                <a href="/logout" class="nav-logout">Logout</a>
+                <a href="/logout" class="nav-logout">{{ nav_ic('<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>') }}<span class="nav-label">Logout</span></a>
                 {% endif %}
+                <div class="nav-version" aria-label="Version">Evonic <span>v{{ evonic_version }}</span></div>
             </nav>
+            <div id="nav-backdrop" onclick="toggleNav(false)" aria-hidden="true"></div>
         </div>
         <!-- Update notification banner (hidden by default) -->
         <div id="ev-update-banner" style="display:none">
@@ -168,13 +165,13 @@
             </div>
         </div>
         <!-- WhatsApp disconnect warning banner (hidden by default) -->
-        <div id="wa-disconnect-banner" class="hidden bg-amber-50 border-b border-amber-200 text-gray-700">
-            <div class="max-w-[1600px] mx-auto px-4 py-2.5 flex items-center justify-between gap-3 text-sm">
-                <div class="flex items-center gap-2 min-w-0">
-                    <svg class="w-4 h-4 flex-shrink-0 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"/></svg>
+        <div id="wa-disconnect-banner" class="hidden ev-banner ev-banner-warn" role="alert">
+            <div class="ev-banner-in">
+                <div class="ev-banner-tx">
+                    <svg class="ev-banner-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
                     <span id="wa-disconnect-banner-text"></span>
                 </div>
-                <button type="button" onclick="document.getElementById('wa-disconnect-banner').classList.add('hidden')" class="flex-shrink-0 p-1 rounded text-gray-500 hover:text-gray-800 hover:bg-amber-100 transition-colors text-lg leading-none" title="Dismiss" aria-label="Dismiss WhatsApp channel alert">&times;</button>
+                <button type="button" onclick="document.getElementById('wa-disconnect-banner').classList.add('hidden')" class="ev-banner-x" title="Dismiss" aria-label="Dismiss"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
             </div>
         </div>
         <!-- System alert banners (critical background errors) -->
@@ -247,10 +244,10 @@
             </footer>
         </div>
     </div>
-    <script src="{{ url_for('static', filename='js/update-banner.js') }}?v=2" defer></script>
-    <script src="{{ url_for('static', filename='js/system-alerts.js') }}?v=1" defer></script>
-    <script src="{{ url_for('static', filename='js/agent-sidebar.js') }}?v=5" defer></script>
-    <script src="{{ url_for('static', filename='js/evonic.js') }}?v=5" defer></script>
+    <script src="{{ url_for('static', filename='js/update-banner.js') }}?v=3" defer></script>
+    <script src="{{ url_for('static', filename='js/system-alerts.js') }}?v=2" defer></script>
+    <script src="{{ url_for('static', filename='js/agent-sidebar.js') }}?v=7" defer></script>
+    <script src="{{ url_for('static', filename='js/evonic.js') }}?v=6" defer></script>
     <!-- Wrapped so the deferred agent-sidebar.js has defined initSidebar by DOMContentLoaded -->
     <script>document.addEventListener('DOMContentLoaded', function () { initSidebar(); });</script>
     {% if session.get('authenticated') %}
@@ -271,15 +268,15 @@
             } else {
                 var items = agents.map(function (a) {
                     var agentId = String(a.id || '').replace(/^\/+|\/+$/g, '');
-                    var label = '<span class="font-semibold text-gray-800">' + esc(a.name) + '</span>';
+                    var label = '<span class="font-semibold">' + esc(a.name) + '</span>';
                     if (agentId) {
                         var href = '/agents/' + encodeURIComponent(agentId);
-                        label = '<a href="' + href + '" class="font-semibold text-amber-700 hover:text-gray-900 underline transition-colors">' + esc(a.name) + '</a>';
+                        label = '<a href="' + href + '" class="font-semibold underline underline-offset-2">' + esc(a.name) + '</a>';
                     }
-                    return label + ' <span class="text-gray-500">(' + esc(STATUS_LABELS[a.status] || a.status) + ')</span>';
+                    return label + ' <span class="opacity-70">(' + esc(STATUS_LABELS[a.status] || a.status) + ')</span>';
                 });
                 document.getElementById('wa-disconnect-banner-text').innerHTML =
-                    '<strong class="font-semibold text-gray-800">WhatsApp channel alert:</strong> ' + items.join(', ');
+                    '<strong class="font-semibold">WhatsApp channel alert:</strong> ' + items.join(', ');
                 banner.classList.remove('hidden');
             }
         }
@@ -318,5 +315,57 @@
     })();
     </script>
     {% endif %}
+<script>
+// Mobile navigation menu: toggle, close on backdrop / Escape / link tap / leaving the mobile layout.
+// The navbar's glass layer grows by the menu's height (--nav-extra) so navbar + menu read as one surface.
+function syncNavExtra() {
+    var nav = document.getElementById('site-nav');
+    var open = !!nav && nav.classList.contains('nav-open') && window.innerWidth <= 768;
+    document.documentElement.style.setProperty('--nav-extra', open ? nav.offsetHeight + 'px' : '0px');
+}
+function toggleNav(force) {
+    var nav = document.getElementById('site-nav');
+    if (!nav) return;
+    var open = typeof force === 'boolean' ? force : !nav.classList.contains('nav-open');
+    nav.classList.toggle('nav-open', open);
+    document.body.classList.toggle('nav-menu-open', open);
+    syncNavExtra();
+    var btn = document.querySelector('.nav-toggle');
+    if (btn) btn.setAttribute('aria-expanded', String(open));
+}
+document.addEventListener('keydown', function (e) { if (e.key === 'Escape') toggleNav(false); });
+document.addEventListener('click', function (e) {
+    if (e.target.closest && e.target.closest('#site-nav a')) toggleNav(false);
+});
+window.addEventListener('resize', function () { if (window.innerWidth > 768) toggleNav(false); else syncNavExtra(); });
+
+// Desktop navbar: one underline that slides to the hovered / focused link and returns to the current page's link.
+(function () {
+    var nav = document.getElementById('site-nav'), ink = nav && nav.querySelector('.nav-ink');
+    if (!nav || !ink) return;
+    var links = Array.prototype.slice.call(nav.querySelectorAll('a'));
+    function active() { return nav.querySelector('a.nav-active'); }
+    function place(link, animate) {
+        if (!link || window.innerWidth <= 768) { ink.classList.remove('is-on'); return; }
+        var pad = parseFloat(getComputedStyle(link).paddingLeft) || 12;
+        if (!animate) ink.style.transition = 'none';
+        ink.style.width = Math.max(link.offsetWidth - pad * 2, 8) + 'px';
+        ink.style.transform = 'translate(' + (link.offsetLeft + pad) + 'px,' + (link.offsetTop + link.offsetHeight - 1) + 'px)';
+        ink.classList.add('is-on');
+        if (!animate) { void ink.offsetWidth; ink.style.transition = ''; }
+    }
+    function home(animate) { place(active(), animate); if (!active()) ink.classList.remove('is-on'); }
+    links.forEach(function (a) {
+        a.addEventListener('mouseenter', function () { place(a, true); });
+        a.addEventListener('focus', function () { place(a, true); });
+        a.addEventListener('blur', function () { home(true); });
+    });
+    nav.addEventListener('mouseleave', function () { home(true); });
+    window.addEventListener('resize', function () { home(false); });
+    window.addEventListener('load', function () { home(false); });
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(function () { home(false); });
+    home(false);
+})();
+</script>
 </body>
 </html>

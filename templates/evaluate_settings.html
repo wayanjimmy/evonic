@@ -5,7 +5,7 @@
     {% include "partials/evaluate_subnav.html" %}
 
     <div class="settings-header">
-        <h2>Evaluation Settings</h2>
+        <h2><span class="ev-h-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3M14 2v4M8 10v4M16 18v4"/></svg></span>Evaluation Settings</h2>
     </div>
 
     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -73,11 +73,10 @@ function markDirty() {
 async function loadEvaluationModel(selectedId) {
     const selector = document.getElementById("eval-model-selector");
     const models = await fetch("/api/models").then(response => response.json());
-    (models.models || []).forEach(model => {
-        const option = document.createElement("option");
-        option.value = model.id; option.textContent = model.name; selector.appendChild(option);
+    ui.populateModelSelect(selector, models.models || [], {
+        labelFor: m => m.name,
+        selectedValue: selectedId || ""
     });
-    selector.value = selectedId;
 }
 
 async function saveEvaluationModel(modelId) {
@@ -138,4 +137,5 @@ function showFeedback(message, success) {
 
 loadSettings();
 </script>
+{% include "partials/evaluate_ui.html" %}
 {% endblock %}

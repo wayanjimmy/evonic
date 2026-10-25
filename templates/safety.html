@@ -1,0 +1,553 @@
+{% extends "base.html" %}
+{% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/settings.css') }}?v=19">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/safety.css') }}?v=15">
+
+<div class="settings-console safety-console">
+    <div class="settings-console-header">
+        <div class="settings-console-title">
+            <h2><i data-lucide="shield-check"></i>Safety</h2>
+            <span class="settings-console-sub">Heuristic (HMADS) and decision-model (DMSS) safety controls for agent tool execution</span>
+        </div>
+    </div>
+
+    <div class="settings-shell">
+        {% include 'partials/settings/nav.html' %}
+
+        <div class="settings-pane-wrap safety-main">
+    <!-- ==================== Tabs ==================== -->
+    <div class="safety-tabs" role="tablist" aria-label="Safety sections" id="safety-tablist">
+        <button type="button" class="safety-tab" role="tab" id="safety-tab-general"
+                data-tab="general" aria-selected="true" aria-controls="safety-panel-general">
+            <i data-lucide="sliders-horizontal"></i><span>General</span>
+        </button>
+        <button type="button" class="safety-tab" role="tab" id="safety-tab-hmads"
+                data-tab="hmads" aria-selected="false" aria-controls="safety-panel-hmads" tabindex="-1">
+            <i data-lucide="shield-alert"></i><span>HMADS</span>
+        </button>
+        <button type="button" class="safety-tab" role="tab" id="safety-tab-dmss"
+                data-tab="dmss" aria-selected="false" aria-controls="safety-panel-dmss" tabindex="-1">
+            <i data-lucide="brain-circuit"></i><span>DMSS</span>
+        </button>
+    </div>
+
+    <!-- ==================== General ==================== -->
+    <div role="tabpanel" id="safety-panel-general" aria-labelledby="safety-tab-general" class="safety-panel"
+         data-policy="hmads-only" data-mode="shadow">
+
+        <!-- Live posture: what is running right now -->
+        <section class="sg-posture" id="sg-posture" data-state="loading" aria-labelledby="sg-posture-title">
+            <div class="sg-posture-head">
+                <span class="sg-posture-icon" aria-hidden="true"><i data-lucide="shield-check"></i></span>
+                <div class="sg-posture-text">
+                    <span class="sg-posture-label">Running now</span>
+                    <h3 class="sg-posture-title" id="sg-posture-title">Loading safety status…</h3>
+                    <p class="sg-posture-desc" id="sg-posture-desc">Reading the policy and provider health.</p>
+                </div>
+                <div class="rf-wrap">
+                    <span class="rf-stamp" id="sg-updated" role="status" aria-live="polite"></span>
+                    <button type="button" class="sf-btn rf-btn" id="sg-refresh" aria-label="Refresh status" data-target="#sg-posture">
+                        <span class="rf-icon" aria-hidden="true"><i data-lucide="refresh-cw"></i><i data-lucide="check"></i><i data-lucide="x"></i></span><span class="rf-label">Refresh</span>
+                    </button>
+                </div>
+            </div>
+
+            <div id="sg-loading" class="sg-facts sg-facts-skeleton" aria-hidden="true">
+                <div class="sg-fact"><span></span><span></span></div>
+                <div class="sg-fact"><span></span><span></span></div>
+                <div class="sg-fact"><span></span><span></span></div>
+                <div class="sg-fact"><span></span><span></span></div>
+            </div>
+            <div id="sg-error" class="sg-posture-err" role="alert" hidden>
+                <i data-lucide="triangle-alert"></i>
+                <span id="sg-error-msg">Failed to load safety status. The policy below may be out of date.</span>
+                <button type="button" class="sf-btn" id="sg-retry">Retry</button>
+            </div>
+            <dl id="sg-status" class="sg-facts" hidden>
+                <div class="sg-fact">
+                    <dt>Provider</dt>
+                    <dd><span id="sg-provider">—</span> <span id="sg-circuit-badge" class="sf-badge sf-badge-muted">closed</span></dd>
+                </div>
+                <div class="sg-fact">
+                    <dt>Fallback (24h)</dt>
+                    <dd class="num" id="sg-fallback">—</dd>
+                </div>
+                <div class="sg-fact">
+                    <dt>Last decision</dt>
+                    <dd class="num" id="sg-last">—</dd>
+                </div>
+                <div class="sg-fact">
+                    <dt>Timeout</dt>
+                    <dd class="num" id="sg-timeout">—</dd>
+                </div>
+                <div class="sg-fact">
+                    <dt>Min. confidence</dt>
+                    <dd class="num" id="sg-confidence">—</dd>
+                </div>
+                <div class="sg-fact">
+                    <dt>Circuit breaker</dt>
+                    <dd class="num" id="sg-breaker">—</dd>
+                </div>
+                <div class="sg-fact">
+                    <dt>Retention</dt>
+                    <dd class="num" id="sg-retention">—</dd>
+                </div>
+            </dl>
+        </section>
+
+        <div class="sg-layout">
+            <!-- Policy controls (persistence: task #837) -->
+            <section class="sg-policy" id="sg-controls" aria-labelledby="sg-policy-label">
+                <div class="sg-section-head">
+                    <div class="sg-head-row">
+                        <h3 id="sg-policy-label">Policy</h3>
+                        <span class="save-status" id="sg-status-policy" aria-live="polite"></span>
+                    </div>
+                    <p>
+                        Choose how agent <code>bash</code> / <code>python</code> commands are scored.
+                        Changes save automatically and apply to the next command.
+                    </p>
+                </div>
+
+                <div class="sg-choices" role="radiogroup" aria-labelledby="sg-policy-label" id="sg-policy-group">
+                    <label class="sg-choice sf-policy" id="sg-policy-hmads" data-policy="hmads-only">
+                        <input type="radio" name="sg-policy" value="hmads-only" id="sg-radio-hmads">
+                        <span class="sg-choice-mark" aria-hidden="true"></span>
+                        <span class="sg-choice-body">
+                            <span class="sg-choice-name">
+                                HMADS only
+                                <span class="sf-policy-active-pill" hidden>Current</span>
+                            </span>
+                            <span class="sg-choice-desc">
+                                Scored purely by the deterministic heuristic rules — the built-in guards
+                                plus the custom rules in the <a href="#hmads">HMADS tab</a>. No model call,
+                                no network, fully predictable, zero extra latency.
+                            </span>
+                        </span>
+                    </label>
+
+                    <label class="sg-choice sf-policy" id="sg-policy-dmss" data-policy="dmss">
+                        <input type="radio" name="sg-policy" value="dmss" id="sg-radio-dmss">
+                        <span class="sg-choice-mark" aria-hidden="true"></span>
+                        <span class="sg-choice-body">
+                            <span class="sg-choice-name">
+                                DMSS enabled
+                                <span class="sf-policy-active-pill" id="sg-pill-dmss" hidden>Current</span>
+                            </span>
+                            <span class="sg-choice-desc">
+                                A provider-hosted decision model also evaluates each command, with the
+                                deterministic HMADS decision as the exact fallback.
+                            </span>
+                        </span>
+                    </label>
+                </div>
+                <span class="sf-field-err" id="sg-err-policy" hidden></span>
+
+                <!-- DMSS mode selector (shadow / enforce) -->
+                <div class="sg-mode" id="sg-mode-field">
+                    <div class="sg-mode-head">
+                        <span class="sg-mode-label" id="sg-mode-label">DMSS mode</span>
+                        <span class="save-status" id="sg-status-mode" aria-live="polite"></span>
+                    </div>
+                    <div class="sg-mode-group" role="radiogroup" aria-labelledby="sg-mode-label" id="sg-mode-group">
+                        <label class="sg-mode-opt">
+                            <input type="radio" name="sg-mode" value="shadow" id="sg-radio-shadow">
+                            <span class="sg-mode-name"><i data-lucide="eye"></i>Shadow</span>
+                            <span class="sg-mode-desc">Model decisions are recorded and compared, but HMADS still decides.</span>
+                        </label>
+                        <label class="sg-mode-opt">
+                            <input type="radio" name="sg-mode" value="enforce" id="sg-radio-enforce">
+                            <span class="sg-mode-name"><i data-lucide="gavel"></i>Enforce</span>
+                            <span class="sg-mode-desc">The model decides when it can; HMADS is the exact fallback.</span>
+                        </label>
+                    </div>
+                    <span class="sg-mode-off">Not used while the policy is &ldquo;HMADS only&rdquo; (effective mode: <code>off</code>).</span>
+                    <span class="sf-field-err" id="sg-err-mode" hidden></span>
+                </div>
+            </section>
+
+            <!-- How a command is decided (follows the selected policy + mode) -->
+            <aside class="sg-flow" aria-labelledby="sg-flow-title">
+                <h3 class="sg-flow-title" id="sg-flow-title">How a command is decided</h3>
+                <ol class="sg-flow-steps">
+                    <li class="sg-step">
+                        <span class="sg-step-dot" aria-hidden="true"><i data-lucide="terminal"></i></span>
+                        <span class="sg-step-name">Agent runs a command</span>
+                        <span class="sg-step-note"><code>bash</code> or <code>python</code> tool call</span>
+                    </li>
+                    <li class="sg-step sg-step-hmads">
+                        <span class="sg-step-dot" aria-hidden="true"><i data-lucide="shield-alert"></i></span>
+                        <span class="sg-step-name">HMADS scores it</span>
+                        <span class="sg-step-note">Deterministic rules, always run</span>
+                    </li>
+                    <li class="sg-step sg-step-dmss">
+                        <span class="sg-step-dot" aria-hidden="true"><i data-lucide="brain-circuit"></i></span>
+                        <span class="sg-step-name">DMSS model evaluates it</span>
+                        <span class="sg-step-note">
+                            <span class="sg-when-off">Skipped — the provider is never called</span>
+                            <span class="sg-when-shadow">Recorded and compared only</span>
+                            <span class="sg-when-enforce">Its decision is used when usable</span>
+                        </span>
+                    </li>
+                    <li class="sg-step sg-step-final">
+                        <span class="sg-step-dot" aria-hidden="true"><i data-lucide="circle-check"></i></span>
+                        <span class="sg-step-name">
+                            <span class="sg-when-off sg-when-shadow">HMADS decision applied</span>
+                            <span class="sg-when-enforce">DMSS decision applied</span>
+                        </span>
+                        <span class="sg-step-note">A command is never left undecided</span>
+                    </li>
+                </ol>
+
+                <div class="sg-fallback">
+                    <div class="sg-fallback-title"><i data-lucide="undo-2"></i>Deterministic HMADS fallback</div>
+                    <p>When DMSS is enabled, the HMADS decision is applied instead if:</p>
+                    <ul>
+                        <li>the call times out (<code>request_timeout_ms</code>)</li>
+                        <li>the circuit breaker is open</li>
+                        <li>the decision is malformed, or confidence is below <code>minimum_confidence</code></li>
+                    </ul>
+                    <p>Identical inputs always produce identical outcomes.</p>
+                </div>
+            </aside>
+        </div>
+    </div>
+
+    <!-- ==================== HMADS ==================== -->
+    <div role="tabpanel" id="safety-panel-hmads" aria-labelledby="safety-tab-hmads" class="safety-panel" hidden>
+        {% include 'partials/hmads.html' %}
+    </div>
+
+    <!-- ==================== DMSS ==================== -->
+    <div role="tabpanel" id="safety-panel-dmss" aria-labelledby="safety-tab-dmss" class="safety-panel" hidden>
+        <div class="dm-head">
+            <div class="dm-head-text">
+                <h3>Decision Model Safety System</h3>
+                <p>Provider-agnostic decision-model safety. Deterministic HMADS remains the fallback.</p>
+            </div>
+            <div class="rf-wrap">
+                <span class="rf-stamp" id="dmss-updated" role="status" aria-live="polite"></span>
+                <button type="button" class="sf-btn rf-btn" id="dmss-refresh" aria-label="Refresh DMSS telemetry" data-target="#safety-panel-dmss .sf-dmss-grid"><span class="rf-icon" aria-hidden="true"><i data-lucide="refresh-cw"></i><i data-lucide="check"></i><i data-lucide="x"></i></span><span class="rf-label">Refresh</span></button>
+            </div>
+        </div>
+
+        <div id="dmss-error" class="dm-alert" role="alert" hidden>
+            <i data-lucide="triangle-alert"></i>
+            <span id="dmss-error-msg">Failed to load DMSS telemetry.</span>
+            <button type="button" class="sf-btn" id="dmss-retry">Retry</button>
+        </div>
+
+        <!-- Overview: what DMSS is doing right now -->
+        <div class="sf-dmss-grid">
+            <div class="sf-kpi dm-kpi-status" id="kpi-status-card" data-state="loading">
+                <div class="sf-kpi-label">Status</div>
+                <div class="sf-kpi-value"><span class="dm-dot" aria-hidden="true"></span><span id="kpi-enabled">—</span></div>
+                <div class="sf-kpi-sub" id="kpi-mode">—</div>
+            </div>
+            <div class="sf-kpi">
+                <div class="sf-kpi-label">Provider</div>
+                <div class="sf-kpi-value" id="kpi-provider">—</div>
+                <div class="sf-kpi-sub"><span id="kpi-circuit" class="sf-badge sf-badge-muted">circuit —</span></div>
+            </div>
+            <div class="sf-kpi">
+                <div class="sf-kpi-label">Comparisons</div>
+                <div class="sf-kpi-value num" id="kpi-total">—</div>
+                <div class="sf-kpi-sub" id="kpi-accepted">—</div>
+            </div>
+            <div class="sf-kpi">
+                <div class="sf-kpi-label">Fallback rate <span class="dm-kpi-hint">24h</span></div>
+                <div class="sf-kpi-value num" id="kpi-fallback">—</div>
+                <div class="sf-kpi-sub" id="kpi-unsafe">—</div>
+            </div>
+            <div class="sf-kpi">
+                <div class="sf-kpi-label">Latency <span class="dm-kpi-hint">p50</span></div>
+                <div class="sf-kpi-value num" id="kpi-latency">—</div>
+                <div class="sf-kpi-sub" id="kpi-last-call">—</div>
+            </div>
+        </div>
+
+        <!-- Provider configuration (task #838) -->
+        <form class="sf-card sf-mt dc-form" id="dmss-config" novalidate>
+            <div class="dc-head">
+                <div>
+                    <h3>Provider configuration</h3>
+                    <p>Where DMSS sends commands, and the guardrails that decide when HMADS takes over. Changes save automatically.</p>
+                </div>
+            </div>
+
+            <!-- Connection -->
+            <fieldset class="dc-group">
+                <legend class="dc-group-title"><i data-lucide="plug"></i>Connection</legend>
+                <div class="dc-row">
+                    <div class="dc-row-text">
+                        <div class="dc-label-row">
+                            <label class="dc-label" for="dc-provider">Provider</label>
+                            <span class="save-status" id="dc-status-provider" aria-live="polite"></span>
+                        </div>
+                        <span class="dc-desc">The registered decision service.</span>
+                    </div>
+                    <div class="dc-row-control">
+                        <select id="dc-provider" class="sf-select dc-select"><option value="systemone">SystemOne</option></select>
+                        <span class="sf-field-err" id="dc-err-provider" hidden></span>
+                    </div>
+                </div>
+                <div class="dc-row dc-row-wide">
+                    <div class="dc-row-text">
+                        <div class="dc-label-row">
+                            <label class="dc-label" for="dc-endpoint">Provider endpoint</label>
+                            <span class="save-status" id="dc-status-endpoint" aria-live="polite"></span>
+                        </div>
+                        <span class="dc-desc">Absolute http(s) URL of the provider decision service. Stored as plain configuration and shown here in full.</span>
+                    </div>
+                    <div class="dc-row-control">
+                        <div class="dc-endpoint-row">
+                            <div class="dc-affix">
+                                <i data-lucide="globe" aria-hidden="true"></i>
+                                <input id="dc-endpoint" class="sf-input" type="text" autocomplete="off" spellcheck="false" placeholder="https://…">
+                            </div>
+                            <button type="button" class="sf-btn dc-test-btn" id="dc-endpoint-test">
+                                <i data-lucide="plug-zap" aria-hidden="true"></i><span>Test</span>
+                            </button>
+                        </div>
+                        <span class="sf-field-err" id="dc-err-endpoint" hidden></span>
+                        <div id="dc-endpoint-test-result" class="dc-test-result" role="status" aria-live="polite" hidden></div>
+                    </div>
+                </div>
+            </fieldset>
+
+            <!-- Decision guardrails -->
+            <fieldset class="dc-group">
+                <legend class="dc-group-title"><i data-lucide="gauge"></i>Decision guardrails</legend>
+                <div class="dc-row">
+                    <div class="dc-row-text">
+                        <div class="dc-label-row">
+                            <label class="dc-label" for="dc-timeout">Timeout</label>
+                            <span class="save-status" id="dc-status-timeout" aria-live="polite"></span>
+                        </div>
+                        <span class="dc-desc">How long to wait for the provider before falling back to HMADS.</span>
+                    </div>
+                    <div class="dc-row-control">
+                        <div class="dc-num" data-min="100" data-max="10000" data-step="100" data-format="duration-ms">
+                            <button type="button" class="dc-step" data-dir="-1" aria-label="Decrease timeout" tabindex="-1"><i data-lucide="minus"></i></button>
+                            <input id="dc-timeout" class="sf-input" type="text" inputmode="numeric" autocomplete="off">
+                            <span class="dc-unit">ms</span>
+                            <button type="button" class="dc-step" data-dir="1" aria-label="Increase timeout" tabindex="-1"><i data-lucide="plus"></i></button>
+                        </div>
+                        <span class="dc-meta"><span class="dc-human" data-for="dc-timeout"></span><span class="dc-range">100 – 10,000 ms</span></span>
+                        <span class="sf-field-err" id="dc-err-timeout" hidden></span>
+                    </div>
+                </div>
+                <div class="dc-row">
+                    <div class="dc-row-text">
+                        <div class="dc-label-row">
+                            <label class="dc-label" for="dc-confidence">Minimum confidence</label>
+                            <span class="save-status" id="dc-status-confidence" aria-live="polite"></span>
+                        </div>
+                        <span class="dc-desc">Model decisions below this confidence fall back to HMADS.</span>
+                    </div>
+                    <div class="dc-row-control">
+                        <div class="dc-conf">
+                            <input type="range" id="dc-confidence-range" class="dc-slider" min="0" max="1" step="0.01"
+                                   aria-label="Minimum confidence" tabindex="-1">
+                            <div class="dc-num dc-num-sm" data-min="0" data-max="1" data-step="0.01" data-decimals="2" data-format="percent">
+                                <input id="dc-confidence" class="sf-input" type="text" inputmode="decimal" autocomplete="off">
+                            </div>
+                        </div>
+                        <span class="dc-meta"><span class="dc-human" data-for="dc-confidence"></span><span class="dc-range">0.00 – 1.00</span></span>
+                        <span class="sf-field-err" id="dc-err-confidence" hidden></span>
+                    </div>
+                </div>
+                <div class="dc-row">
+                    <div class="dc-row-text">
+                        <div class="dc-label-row">
+                            <label class="dc-label" for="dc-payload">Maximum payload</label>
+                            <span class="save-status" id="dc-status-payload" aria-live="polite"></span>
+                        </div>
+                        <span class="dc-desc">Commands longer than this are not sent to the provider.</span>
+                    </div>
+                    <div class="dc-row-control">
+                        <div class="dc-num" data-min="1" data-max="120000" data-step="1000">
+                            <button type="button" class="dc-step" data-dir="-1" aria-label="Decrease maximum payload" tabindex="-1"><i data-lucide="minus"></i></button>
+                            <input id="dc-payload" class="sf-input" type="text" inputmode="numeric" autocomplete="off">
+                            <span class="dc-unit">chars</span>
+                            <button type="button" class="dc-step" data-dir="1" aria-label="Increase maximum payload" tabindex="-1"><i data-lucide="plus"></i></button>
+                        </div>
+                        <span class="dc-meta"><span class="dc-range">1 – 120,000 characters</span></span>
+                        <span class="sf-field-err" id="dc-err-payload" hidden></span>
+                    </div>
+                </div>
+            </fieldset>
+
+            <!-- Circuit breaker -->
+            <fieldset class="dc-group">
+                <legend class="dc-group-title"><i data-lucide="zap-off"></i>Circuit breaker</legend>
+                <div class="dc-row">
+                    <div class="dc-row-text">
+                        <div class="dc-label-row">
+                            <label class="dc-label" for="dc-failures">Circuit failures</label>
+                            <span class="save-status" id="dc-status-failures" aria-live="polite"></span>
+                        </div>
+                        <span class="dc-desc">Consecutive provider failures before the circuit opens and DMSS is skipped.</span>
+                    </div>
+                    <div class="dc-row-control">
+                        <div class="dc-num" data-min="1" data-max="20" data-step="1">
+                            <button type="button" class="dc-step" data-dir="-1" aria-label="Decrease circuit failures" tabindex="-1"><i data-lucide="minus"></i></button>
+                            <input id="dc-failures" class="sf-input" type="text" inputmode="numeric" autocomplete="off">
+                            <span class="dc-unit">failures</span>
+                            <button type="button" class="dc-step" data-dir="1" aria-label="Increase circuit failures" tabindex="-1"><i data-lucide="plus"></i></button>
+                        </div>
+                        <span class="dc-meta"><span class="dc-range">1 – 20</span></span>
+                        <span class="sf-field-err" id="dc-err-failures" hidden></span>
+                    </div>
+                </div>
+                <div class="dc-row">
+                    <div class="dc-row-text">
+                        <div class="dc-label-row">
+                            <label class="dc-label" for="dc-cooldown">Circuit cooldown</label>
+                            <span class="save-status" id="dc-status-cooldown" aria-live="polite"></span>
+                        </div>
+                        <span class="dc-desc">How long the circuit stays open before a single probe call is allowed.</span>
+                    </div>
+                    <div class="dc-row-control">
+                        <div class="dc-num" data-min="1" data-max="3600" data-step="15" data-format="duration-s">
+                            <button type="button" class="dc-step" data-dir="-1" aria-label="Decrease circuit cooldown" tabindex="-1"><i data-lucide="minus"></i></button>
+                            <input id="dc-cooldown" class="sf-input" type="text" inputmode="numeric" autocomplete="off">
+                            <span class="dc-unit">sec</span>
+                            <button type="button" class="dc-step" data-dir="1" aria-label="Increase circuit cooldown" tabindex="-1"><i data-lucide="plus"></i></button>
+                        </div>
+                        <span class="dc-meta"><span class="dc-human" data-for="dc-cooldown"></span><span class="dc-range">1 – 3,600 s</span></span>
+                        <span class="sf-field-err" id="dc-err-cooldown" hidden></span>
+                    </div>
+                </div>
+            </fieldset>
+
+        </form>
+
+        <!-- Diagnostic tester (task #839): sits under the config it exercises -->
+        <section class="sf-card sf-mt dm-card dm-tester" aria-labelledby="dm-tester-title">
+            <div class="dm-card-head">
+                <div>
+                    <h3 id="dm-tester-title"><i data-lucide="flask-conical"></i>Diagnostic tester <span class="sf-tester-note">Diagnostic only</span></h3>
+                    <p>
+                        Call the DMSS provider end-to-end with a sample payload. The payload is treated as
+                        data &mdash; never executed &mdash; and production decisions and telemetry are untouched.
+                    </p>
+                </div>
+            </div>
+            <div class="dm-card-body">
+                <div class="sf-tester-samples" id="dmss-tester-samples" role="group"
+                     aria-label="Ready-to-submit sample payloads">
+                    <span class="sf-tester-samples-label">Samples</span>
+                    <button type="button" class="sf-tester-sample" data-sample="bash-safe"
+                            title='echo "hello world"'>echo "hello world"</button>
+                    <button type="button" class="sf-tester-sample" data-sample="bash-risky"
+                            title="sudo rm -rf ./build">sudo rm -rf ./build</button>
+                    <button type="button" class="sf-tester-sample" data-sample="py-safe"
+                            title='print("hello world")'>print("hello world")</button>
+                    <button type="button" class="sf-tester-sample" data-sample="py-risky"
+                            title='import subprocess; subprocess.run("rm -rf ./dist", shell=True)'>subprocess.run(&hellip;)</button>
+                </div>
+                <div class="sf-tester-box">
+                    <textarea id="dmss-tester-payload" rows="3"
+                              placeholder="Paste a command or script…"
+                              aria-label="Sample payload"></textarea>
+                    <div class="sf-tester-meta">
+                        <select id="dmss-tester-tool" class="sf-select" aria-label="Tool type">
+                            <option value="bash">bash</option>
+                            <option value="python">python</option>
+                        </select>
+                        <span id="dmss-tester-count" class="sf-tester-count">0 chars</span>
+                        <span class="dm-kbd-hint"><kbd>⌘</kbd><kbd>Enter</kbd> to run</span>
+                        <button type="button" class="sf-btn sf-btn-primary" id="dmss-tester-run">
+                            <i data-lucide="play"></i>Run test
+                        </button>
+                    </div>
+                </div>
+                <div id="dmss-tester-out" class="sf-tester-out" role="status" aria-live="polite" hidden></div>
+            </div>
+        </section>
+
+        <!-- Telemetry: filters + distribution + activity -->
+        <section class="sf-card sf-mt dm-card" aria-labelledby="dm-telemetry-title">
+            <div class="dm-card-head">
+                <div>
+                    <h3 id="dm-telemetry-title"><i data-lucide="activity"></i>Telemetry</h3>
+                    <p>How DMSS and HMADS decided recent commands. Click a row for the full detection.</p>
+                </div>
+                <button type="button" class="sf-btn dm-btn-quiet-danger" id="dmss-clear">
+                    <i data-lucide="trash-2"></i>Clear telemetry
+                </button>
+            </div>
+
+            <div class="dm-filters" role="group" aria-label="Telemetry filters">
+                <label class="dm-filter">
+                    <span>Window</span>
+                    <select id="f-window" class="sf-select">
+                        <option value="24">Last 24 hours</option>
+                        <option value="168" selected>Last 7 days</option>
+                        <option value="720">Last 30 days</option>
+                        <option value="0">All time</option>
+                    </select>
+                </label>
+                <label class="dm-filter">
+                    <span>Mode</span>
+                    <select id="f-mode" class="sf-select">
+                        <option value="">Any</option>
+                        <option value="shadow">Shadow</option>
+                        <option value="enforce">Enforce</option>
+                    </select>
+                </label>
+                <label class="dm-filter">
+                    <span>Tool</span>
+                    <select id="f-tool" class="sf-select">
+                        <option value="">Any</option>
+                        <option value="bash">bash</option>
+                        <option value="python">python</option>
+                    </select>
+                </label>
+                <label class="dm-filter dm-filter-switch relative cursor-pointer">
+                    <input type="checkbox" id="f-unsafe" class="sr-only peer" checked>
+                    <span class="dyn-toggle"></span>
+                    <span>Unsafe only</span>
+                </label>
+            </div>
+
+            <div class="dm-dist">
+                <div class="dm-dist-panel">
+                    <div class="dm-dist-title">Final decisions</div>
+                    <div class="dm-bars" id="tbl-decisions"></div>
+                </div>
+                <div class="dm-dist-panel">
+                    <div class="dm-dist-title">DMSS vs HMADS agreement</div>
+                    <div class="dm-bars" id="tbl-agreement"></div>
+                </div>
+            </div>
+
+            <div class="dm-activity-head">
+                <span class="dm-dist-title">Activity</span>
+                <span class="dm-activity-count" id="dmss-events-count"></span>
+            </div>
+            <div class="sf-table-wrap">
+                <table class="sf-table dm-events" id="tbl-events">
+                    <thead>
+                        <tr>
+                            <th>When</th><th>Tool</th><th>Final</th><th>Decided by</th>
+                            <th>Model</th><th>Agreement</th><th>Fallback</th>
+                            <th>Disposition</th><th>Fingerprint</th><th class="dm-col-go"><span class="sr-only">Details</span></th>
+                        </tr>
+                    </thead>
+                    <tbody id="tbl-events-body">
+                        <tr><td colspan="10" class="sf-empty-cell">Loading…</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <div id="dmss-pager" class="sf-pager"></div>
+        </section>
+    </div>
+        </div>
+    </div>
+</div>
+
+{% include 'partials/dmss/activity-modal.html' %}
+<script src="{{ url_for('static', filename='js/safety.js') }}?v=14"></script>
+{% endblock %}

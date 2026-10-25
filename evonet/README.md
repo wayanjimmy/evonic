@@ -40,6 +40,45 @@ make build           # current platform → dist/evonet
 
 To make platform binaries available for download in the Evonic UI, run `make build-all` on the server — the UI reads from `evonet/dist/`.
 
+### Release archives (GitHub Releases)
+
+Every platform has a stable archive name, so a release page can be refreshed by re-uploading the same assets. All archives are written to `dist/`.
+
+| Asset | Contains | Make target |
+|-------|----------|-------------|
+| `evonet-linux-amd64.zip` | `evonet-linux-amd64` (CLI with GUI) | `make release-linux-amd64` |
+| `evonet-linux-arm64.zip` | `evonet-linux-arm64` (headless CLI) | `make release-linux-arm64` |
+| `evonet-macos-arm64.zip` | `evonet-darwin-arm64` (headless CLI) | `make release-macos-arm64` |
+| `evonet-macos-amd64.zip` | `evonet-darwin-amd64` (headless CLI) | `make release-macos-amd64` |
+| `evonet-windows-amd64.zip` | `evonet-windows-amd64.exe` (GUI) | `make release-windows-amd64` |
+| `evonet-macos-arm64-app.zip` | `Evonet.app` bundle (macOS only) | `make release-gui-macos` |
+| `checksums.txt` | SHA-256 for every archive built | `make release-checksums` |
+
+```bash
+make release             # all 5 CLI archives + dist/checksums.txt
+make release-all         # make release + the macOS GUI bundle (run on a Mac)
+make release-macos       # just the two macOS CLI archives
+
+make release-linux-amd64 # single platform, builds the binary then the archive
+```
+
+`checksums.txt` covers every archive present in `dist/`, so build the GUI archive before the checksums if you want it included — `make release-all` does this in the right order:
+
+```bash
+make release-all
+cd dist && shasum -a 256 -c checksums.txt
+```
+
+Upload the archives and `checksums.txt` to the matching GitHub Release:
+
+```bash
+gh release create v1.2.8 dist/evonet-*.zip dist/checksums.txt \
+  --repo anvie/evonic --title "Evonet v1.2.8" --generate-notes
+```
+
+The macOS GUI archive contains an ad-hoc-signed `Evonet.app`; it is not Developer ID signed or notarized, so users must right-click → Open on first launch (see the Gatekeeper note below).
+
+
 ### Building GUI binaries (Windows & macOS)
 
 The Windows and macOS binaries include a desktop GUI — a log window with a Stop button — so non-technical users can run Evonet by double-clicking without opening a terminal. Linux builds are always headless (no GUI, no extra dependencies).

@@ -127,6 +127,7 @@ func showConnectorView(a fyne.App, w fyne.Window, root *fyne.Container, store *c
 
 	var client *ws.Client
 	var running bool
+	var switching bool
 	var gen int
 
 	startClient := func() {
@@ -182,24 +183,52 @@ func showConnectorView(a fyne.App, w fyne.Window, root *fyne.Container, store *c
 		}()
 	}
 
-	// Switching servers: stop the current connection, mark the picked server
-	// active, persist, then reconnect to it.
+	// Switching servers can close a connection with an in-flight write and save
+	// configuration to disk. Keep both operations off the Cocoa/Fyne event loop.
 	serverSelect.OnChanged = func(string) {
 		idx := serverSelect.SelectedIndex()
-		if idx < 0 || idx >= len(store.Servers) {
+		if switching || idx < 0 || idx >= len(store.Servers) {
 			return
 		}
 		picked := store.Servers[idx]
 		if picked.Label() == cfg.Label() && running {
 			return
 		}
+
+		switching = true
+		gen++ // invalidate callbacks queued by the old client before it is stopped
+		switchGen := gen
+		oldClient := client
 		store.SetActive(serverKeyOf(picked))
-		_ = config.SaveStore(store)
-		if client != nil {
-			client.Stop()
-		}
-		lw.Clear()
-		startClient()
+		running = false
+		serverSelect.Disable()
+		toggleBtn.Disable()
+		serversBtn.Disable()
+		clearBtn.Disable()
+		connectedText.Hide()
+		statusLabel.Show()
+		statusLabel.SetText("Switching to " + picked.ServerURL + "...")
+
+		go func() {
+			if oldClient != nil {
+				oldClient.Stop()
+			}
+			if err := config.SaveStore(store); err != nil {
+				log.Printf("[evonet] saving selected server: %v", err)
+			}
+			fyne.Do(func() {
+				if gen != switchGen {
+					return
+				}
+				lw.Clear()
+				startClient()
+				switching = false
+				serverSelect.Enable()
+				toggleBtn.Enable()
+				serversBtn.Enable()
+				clearBtn.Enable()
+			})
+		}()
 	}
 
 	selectBox := container.NewGridWrap(fyne.NewSize(220, serverSelect.MinSize().Height), serverSelect)

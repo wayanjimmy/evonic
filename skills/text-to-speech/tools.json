@@ -1,0 +1,22 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "generate_speech",
+      "description": "Convert text to a spoken audio artifact through an enabled Text to Speech provider. Specify provider to override the configured default.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "text": {"type": "string", "description": "Text to speak."},
+          "provider": {"type": "string", "description": "Optional provider ID. Usually omit: the administrator's configured provider is used, and this choice may be ignored."},
+          "voice": {"type": "string", "description": "Optional voice/persona. Usually omit: the administrator-configured persona is used and this choice may be ignored; only approved voices are accepted and an invalid one returns the approved list. Voices are tied to the model (e.g. Gemini names like Puck, Kokoro IDs like af_heart)."},
+          "model": {"type": "string", "description": "Optional model. Usually omit: the administrator's configured model is used, and this choice may be ignored."},
+          "output_format": {"type": "string", "enum": ["wav", "mp3"], "description": "Requested audio format when supported by the selected provider. Defaults to the provider's native format."},
+          "speed": {"type": "number", "minimum": 0.25, "maximum": 4.0, "description": "Optional speaking speed multiplier. Ignored (with a warning) if the selected provider does not support it."},
+          "instructions": {"type": "string", "description": "Optional delivery/style guidance (e.g. 'cheerful, slow'). Ignored (with a warning) if the selected provider does not support it."}
+        },
+        "required": ["text"]
+      }
+    }
+  }
+]

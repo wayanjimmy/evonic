@@ -41,7 +41,7 @@ PLUGINS_DIR = os.path.join(BASE_DIR, 'plugins')
 VALID_EVENTS = {
     'turn_complete', 'message_received', 'session_created', 'summary_updated',
     'processing_started', 'llm_thinking', 'llm_response_chunk',
-    'tool_executed', 'final_answer', 'message_sent',
+    'tool_call_started', 'tool_executed', 'final_answer', 'message_sent',
     'kanban_task_created', 'kanban_task_updated',
     'schedule_fired', 'schedule_created', 'schedule_cancelled',
     'state_transition', 'llm_usage',
@@ -51,7 +51,14 @@ VALID_EVENTS = {
 class PluginManager:
     MAX_LOG_ENTRIES = 500
 
-    def __init__(self):
+    def __init__(self, load_plugins: bool = True):
+        """Create a plugin manager.
+
+        Pass load_plugins=False for metadata-only callers (CLI plugin list,
+        requirements checks): importing a plugin handler executes its module
+        level code, which in a short-lived process can mutate shared state
+        the live server owns.
+        """
         os.makedirs(PLUGINS_DIR, exist_ok=True)
         self._handlers: Dict[str, List[Tuple[str, Callable]]] = {}  # event -> [(plugin_id, fn)]
         self._modules: Dict[str, Any] = {}  # plugin_id -> loaded module
@@ -65,7 +72,8 @@ class PluginManager:
         # Parsed-JSON cache keyed by path with mtime invalidation (tool-def
         # files are read on every agent context build via get_all_plugin_tool_defs).
         self._json_file_cache: Dict[str, tuple] = {}
-        self._load_all()
+        if load_plugins:
+            self._load_all()
 
     def _is_plugin_enabled(self, plugin_id: str) -> bool:
         """Check if a plugin is enabled. DB is authoritative; absent = disabled."""
@@ -370,6 +378,26 @@ class PluginManager:
         """Return list of registered blueprint names."""
         return list(self._blueprints.keys())
 
+    def get_plugin_endpoints(self, plugin_id: str) -> List[Dict[str, Any]]:
+        """Return HTTP routes registered by a plugin's runtime Flask blueprint."""
+        blueprint = self._blueprints.get(plugin_id)
+        if blueprint is None:
+            return []
+
+        from flask import current_app
+        endpoint_prefix = f'{blueprint.name}.'
+        endpoints = []
+        for rule in current_app.url_map.iter_rules():
+            if not rule.endpoint.startswith(endpoint_prefix):
+                continue
+            methods = sorted(method for method in rule.methods if method not in {'HEAD', 'OPTIONS'})
+            endpoints.append({
+                'path': rule.rule,
+                'methods': methods,
+                'endpoint': rule.endpoint,
+            })
+        return sorted(endpoints, key=lambda item: (item['path'], item['methods'], item['endpoint']))
+
     def dispatch(self, event_name: str, event_data: dict):
         """Dispatch an event via the event stream (non-blocking). Backward compat."""
         from backend.event_stream import event_stream
@@ -592,6 +620,8 @@ class PluginManager:
         manifest['enabled'] = self._is_plugin_enabled(plugin_id)
         manifest['events'] = manifest.get('events', [])
         manifest['event_count'] = len(manifest['events'])
+        manifest['endpoints'] = self.get_plugin_endpoints(plugin_id)
+        manifest['endpoint_count'] = len(manifest['endpoints'])
         manifest['variables'] = manifest.get('variables', [])
         manifest['config'] = self.get_plugin_config(plugin_id)
 

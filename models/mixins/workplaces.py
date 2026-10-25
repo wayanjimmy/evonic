@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import uuid
 from typing import Dict, Any, List, Optional
@@ -14,6 +15,40 @@ class WorkplaceMixin:
             cursor = conn.cursor()
             cursor.execute("SELECT id, name, type, config, status, error_msg, last_connected_at, created_at, updated_at FROM workplaces ORDER BY name")
             return [dict(row) for row in cursor.fetchall()]
+
+    # Config keys safe to expose in workplace summaries (never password / key_path)
+    _SUMMARY_CONFIG_KEYS = ('workspace_path', 'host', 'username', 'port')
+
+    def get_workplace_summaries(self) -> List[Dict[str, Any]]:
+        """Lightweight list for pickers: one query, no agent lists, no secrets.
+
+        Each item carries the display fields only; ``connector`` holds the
+        tunnel device info (without its token) or is None.
+        """
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("""
+                SELECT w.id, w.name, w.type, w.config, w.status, w.error_msg, w.last_connected_at,
+                       (SELECT COUNT(*) FROM agents a WHERE a.workplace_id = w.id) AS agent_count,
+                       c.id AS connector_id, c.device_name, c.platform, c.version, c.last_seen_at, c.ip_addresses
+                FROM workplaces w
+                LEFT JOIN tunnel_connectors c
+                       ON c.id = (SELECT id FROM tunnel_connectors WHERE workplace_id = w.id LIMIT 1)
+                ORDER BY w.name COLLATE NOCASE
+            """).fetchall()
+        summaries = []
+        for row in rows:
+            try:
+                cfg = json.loads(row['config'] or '{}')
+            except (TypeError, ValueError):
+                cfg = {}
+            item = {k: row[k] for k in ('id', 'name', 'type', 'status', 'error_msg', 'last_connected_at', 'agent_count')}
+            item.update({k: cfg.get(k) for k in self._SUMMARY_CONFIG_KEYS if isinstance(cfg, dict) and cfg.get(k)})
+            item['connector'] = None if row['connector_id'] is None else {
+                k: row[k] for k in ('device_name', 'platform', 'version', 'last_seen_at', 'ip_addresses')
+            }
+            summaries.append(item)
+        return summaries
 
     def get_workplace(self, workplace_id: str) -> Optional[Dict[str, Any]]:
         with self._connect() as conn:
@@ -118,7 +153,7 @@ class WorkplaceMixin:
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            cursor.execute("SELECT id, workplace_id, connector_token, pairing_code, pairing_expires_at, device_name, platform, version, last_seen_at FROM tunnel_connectors WHERE id = ?", (connector_id,))
+            cursor.execute("SELECT id, workplace_id, connector_token, pairing_code, pairing_expires_at, device_name, platform, version, last_seen_at, ip_addresses FROM tunnel_connectors WHERE id = ?", (connector_id,))
             row = cursor.fetchone()
             return dict(row) if row else None
 
@@ -126,7 +161,7 @@ class WorkplaceMixin:
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            cursor.execute("SELECT id, workplace_id, connector_token, pairing_code, pairing_expires_at, device_name, platform, version, last_seen_at FROM tunnel_connectors WHERE connector_token = ?", (token,))
+            cursor.execute("SELECT id, workplace_id, connector_token, pairing_code, pairing_expires_at, device_name, platform, version, last_seen_at, ip_addresses FROM tunnel_connectors WHERE connector_token = ?", (token,))
             row = cursor.fetchone()
             return dict(row) if row else None
 
@@ -134,7 +169,7 @@ class WorkplaceMixin:
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            cursor.execute("SELECT id, workplace_id, connector_token, pairing_code, pairing_expires_at, device_name, platform, version, last_seen_at FROM tunnel_connectors WHERE workplace_id = ?", (workplace_id,))
+            cursor.execute("SELECT id, workplace_id, connector_token, pairing_code, pairing_expires_at, device_name, platform, version, last_seen_at, ip_addresses FROM tunnel_connectors WHERE workplace_id = ?", (workplace_id,))
             row = cursor.fetchone()
             return dict(row) if row else None
 
@@ -142,7 +177,7 @@ class WorkplaceMixin:
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            cursor.execute("SELECT id, workplace_id, connector_token, pairing_code, pairing_expires_at, device_name, platform, version, last_seen_at FROM tunnel_connectors WHERE pairing_code = ?", (code,))
+            cursor.execute("SELECT id, workplace_id, connector_token, pairing_code, pairing_expires_at, device_name, platform, version, last_seen_at, ip_addresses FROM tunnel_connectors WHERE pairing_code = ?", (code,))
             row = cursor.fetchone()
             return dict(row) if row else None
 
@@ -169,7 +204,8 @@ class WorkplaceMixin:
 
     def update_connector(self, connector_id: str, data: Dict[str, Any]) -> bool:
         allowed = {'connector_token', 'pairing_code', 'pairing_expires_at',
-                   'device_name', 'platform', 'version', 'last_seen_at'}
+                   'device_name', 'platform', 'version', 'last_seen_at',
+                   'ip_addresses'}
         updates = {k: v for k, v in data.items() if k in allowed}
         if not updates:
             return False

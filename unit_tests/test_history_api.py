@@ -224,5 +224,151 @@ class TestDatabaseLastRun:
         assert last_id == run_id
 
 
+class TestHistoryAPIModelNameEdit:
+    """Test PATCH /api/run/<run_id>/model-name endpoint"""
+
+    def test_updates_model_name(self):
+        """Renaming a run persists the new model name and cascades to results"""
+        from app import app
+
+        run_id = db.create_evaluation_run("old-model")
+        db.save_individual_test_result(
+            run_id=run_id,
+            test_id="test_rename_1",
+            domain="math",
+            level=1,
+            prompt="2+2?",
+            response="4",
+            expected='{"answer": 4}',
+            score=1.0,
+            status="passed",
+            details="{}",
+            duration_ms=10,
+            model_name="old-model"
+        )
+
+        with app.test_client() as client:
+            _auth(client)
+            response = client.patch(
+                f"/api/run/{run_id}/model-name",
+                json={"model_name": "new-model"}
+            )
+            assert response.status_code == 200
+            data = response.get_json()
+            assert data["success"] is True
+            assert data["model_name"] == "new-model"
+
+        # Persisted on the run...
+        run_info = db.get_evaluation_run(run_id)
+        assert run_info["model_name"] == "new-model"
+
+        # ...and cascaded to the stored individual results
+        results = db.get_individual_test_results(run_id, "math", 1)
+        assert results and results[0]["model_name"] == "new-model"
+
+    def test_trims_whitespace(self):
+        """Surrounding whitespace is stripped before saving"""
+        from app import app
+
+        run_id = db.create_evaluation_run("model-x")
+        with app.test_client() as client:
+            _auth(client)
+            response = client.patch(
+                f"/api/run/{run_id}/model-name",
+                json={"model_name": "  spaced-model  "}
+            )
+            assert response.status_code == 200
+            assert response.get_json()["model_name"] == "spaced-model"
+
+        assert db.get_evaluation_run(run_id)["model_name"] == "spaced-model"
+
+    def test_rejects_empty_model_name(self):
+        """An empty or whitespace-only name is rejected with 400"""
+        from app import app
+
+        run_id = db.create_evaluation_run("model-keep")
+        with app.test_client() as client:
+            _auth(client)
+            for payload in ({"model_name": ""}, {"model_name": "   "}):
+                response = client.patch(
+                    f"/api/run/{run_id}/model-name",
+                    json=payload
+                )
+                assert response.status_code == 400
+                assert "error" in response.get_json()
+
+        # Unchanged
+        assert db.get_evaluation_run(run_id)["model_name"] == "model-keep"
+
+    def test_rejects_missing_field(self):
+        """A payload without model_name is rejected with 400"""
+        from app import app
+
+        run_id = db.create_evaluation_run("model-keep-2")
+        with app.test_client() as client:
+            _auth(client)
+            response = client.patch(f"/api/run/{run_id}/model-name", json={})
+            assert response.status_code == 400
+
+    def test_rejects_too_long_model_name(self):
+        """Model names longer than 200 characters are rejected"""
+        from app import app
+
+        run_id = db.create_evaluation_run("model-len")
+        with app.test_client() as client:
+            _auth(client)
+            response = client.patch(
+                f"/api/run/{run_id}/model-name",
+                json={"model_name": "x" * 201}
+            )
+            assert response.status_code == 400
+
+    def test_returns_404_for_unknown_run(self):
+        """Renaming a non-existent run returns 404"""
+        from app import app
+
+        with app.test_client() as client:
+            _auth(client)
+            response = client.patch(
+                "/api/run/99999999/model-name",
+                json={"model_name": "whatever"}
+            )
+            assert response.status_code == 404
+
+
+class TestHistoryDetailModelEditUI:
+    """Test the model-name edit control on the /history/<id> detail page"""
+
+    def test_renders_edit_control_when_authenticated(self):
+        """Authenticated users see an editable model name control"""
+        from app import app
+
+        run_id = db.create_evaluation_run("ui-model")
+        with app.test_client() as client:
+            _auth(client)
+            response = client.get(f"/history/{run_id}")
+            assert response.status_code == 200
+            html = response.get_data(as_text=True)
+            assert 'id="run-model-edit-btn"' in html
+            assert 'id="run-model-input"' in html
+            assert 'id="run-model-save-btn"' in html
+            assert f"/api/run/{run_id}/model-name" in html
+            assert "ui-model" in html
+
+    def test_hides_edit_control_when_not_authenticated(self):
+        """Unauthenticated visitors only see the read-only model value"""
+        from app import app
+
+        db.set_setting("public_history", "1")
+        run_id = db.create_evaluation_run("ui-model-readonly")
+        with app.test_client() as client:
+            response = client.get(f"/history/{run_id}")
+            assert response.status_code == 200
+            html = response.get_data(as_text=True)
+            assert 'id="run-model-edit-btn"' not in html
+            assert 'id="run-model-input"' not in html
+            assert "ui-model-readonly" in html
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

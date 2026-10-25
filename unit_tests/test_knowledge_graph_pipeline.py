@@ -44,7 +44,12 @@ def brain(monkeypatch, tmp_path):
     """
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("EVONIC_MEMORY_ENGINE", "evomem")
-    monkeypatch.setenv("EVOMEM_KB_ORGANIZER", "off")
+    # Use the deterministic non-agentic author path (a single ``_kb_llm_json``
+    # call), never the agentic organizer sub-agent. ``off`` would skip filing
+    # entirely, so it must be ``non-agentic`` here. Zero the persistent filing
+    # cooldown so successive ``process_knowledge`` calls in one test all run.
+    monkeypatch.setenv("EVOMEM_KB_ORGANIZER", "non-agentic")
+    monkeypatch.setenv("EVOMEM_KB_ORGANIZER_MIN_INTERVAL_SECONDS", "0")
     return tmp_path
 
 

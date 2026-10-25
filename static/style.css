@@ -3,6 +3,8 @@
 /* Disable zoom on mobile */
 html {
     touch-action: manipulation;
+    /* No rubber-band bounce (or scroll chaining) when the main page is overscrolled */
+    overscroll-behavior: none;
     /* !important so CSS takes priority over the inline style set by anti-flash script,
        allowing var(--bg-page) to respond to html.dark class toggling at runtime. */
     background-color: var(--bg-page) !important;
@@ -10,7 +12,7 @@ html {
 
 /* ==================== Theme Variables ==================== */
 :root {
-    --bg-page: #f5f5f5;
+    --bg-page: #f1f2f4;
     --bg-card: #ffffff;
     --bg-header: #ffffff;
     --bg-hover: #f9fafb;
@@ -28,16 +30,27 @@ html {
     --nav-active-mobile-bg: #eef2ff;
 }
 
+/* Tell the browser the page is dark so native UI (scrollbar tracks, form controls) renders dark too —
+   otherwise hovering a scrollbar paints a light-grey track. */
+html.dark { color-scheme: dark; }
+/* Chat message lists: slim scrollbar with a transparent track and a soft thumb */
+/* The message list only scrolls vertically: one over-wide bubble must never push the whole list sideways */
+#chat-messages { overflow-x: hidden; }
+#chat-messages { scrollbar-width: thin; scrollbar-color: rgb(148 163 184 / .35) transparent; }
 html.dark {
-    --bg-page: #0f172a;
-    --bg-card: #1e293b;
-    --bg-header: #1e293b;
+    /* Primary palette = the login page's: page #0a0f1c, surfaces (header, cards) #111827, indigo accent.
+       The Tailwind gray-800/900 variables are remapped too, so every `dark:bg-gray-800` card and `dark:bg-gray-900` page follows. */
+    --color-gray-800: #111827;
+    --color-gray-900: #0a0f1c;
+    --bg-page: #0a0f1c;
+    --bg-card: #111827;
+    --bg-header: #172136;
     --bg-hover: #334155;
     --bg-controls: #1e293b;
-    --bg-secondary: #1a2332;
+    --bg-secondary: #0f1626;
     --text-primary: #e2e8f0;
     --text-heading: #f1f5f9;
-    --text-secondary: #94a3b8;
+    --text-secondary: #a3b1c6;
     --text-muted: #64748b;
     --border-color: #334155;
     --border-input: #475569;
@@ -68,6 +81,17 @@ html.dark {
 .prose hr { border: none; border-top: 1px solid #d1d5db; margin: 0.75em 0; }
 
 /* Chat bubble markdown prose (compact, used in both agent Test Chat and Sessions) */
+/* Workplace switch marker in chat history (see buildWorkplaceSwitchMarker) */
+.chat-wp-switch { display: flex; align-items: center; gap: .75rem; margin: 1.25rem 0; color: #6b7280; font-size: .75rem; }
+.chat-wp-switch-line { flex: 1 1 0; height: 1px; background: rgb(148 163 184 / .35); }
+.chat-wp-switch-label { flex: 0 1 auto; min-width: 0; max-width: 80%; padding: .1875rem .625rem; border: 1px solid rgb(148 163 184 / .35); border-radius: 9999px;
+    background: rgb(148 163 184 / .08); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat-wp-switch-label .ui-ic { vertical-align: -2px; }
+.chat-wp-switch-label b { font-weight: 600; color: #374151; }
+.chat-wp-switch-time { color: #9ca3af; }
+html.dark .chat-wp-switch { color: #9ca3af; }
+html.dark .chat-wp-switch-label b { color: #e5e7eb; }
+html.dark .chat-wp-switch-time { color: #6b7280; }
 .chat-prose { line-height: 1.5; }
 .chat-prose p { margin: 0.25em 0; }
 .chat-prose p:first-child { margin-top: 0; }
@@ -116,6 +140,8 @@ html.dark .bot-bubble .chat-prose th { background: rgba(255,255,255,0.08); }
 
 /* Tool trace bubbles */
 .tool-trace-chevron { transition: transform 0.15s ease; display: inline-block; }
+/* Inline SVG icons used in the chat timeline / status / approval UI (replace the old emoji) */
+.ui-ic { display: inline-block; flex: none; vertical-align: -0.2em; }
 .tool-trace-chevron.rotated { transform: rotate(90deg); }
 .tool-spinner {
     display: inline-block;
@@ -239,6 +265,7 @@ html.dark .recall-hop { color: #94a3b8; }
 }
 
 body {
+    overscroll-behavior: none;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     line-height: 1.6;
     color: var(--text-primary);
@@ -247,12 +274,35 @@ body {
 
 /* Header */
 header {
+    --nav-corner: 22px;                       /* radius of the inverted (concave) bottom corners; 0 turns them off */
     position: sticky;
     top: 0;
     z-index: 50;
     background: var(--bg-header);
-    border-bottom: 1px solid var(--border-color);
+    /* no bottom border: it would stop dead where the corners curve; the colour step to the page is the edge */
+    box-shadow: 0 1px 0 rgb(15 23 42 / .09), 0 8px 18px -10px rgb(15 23 42 / .25);
 }
+html.dark header { box-shadow: 0 1px 0 rgb(255 255 255 / .06), 0 8px 18px -10px rgb(0 0 0 / .7); }
+/* Inverted corners: the navbar colour flows down into the two lower corners of the page, so the content
+   below looks like it has rounded top corners (quarter-circle cut out of a square filled with the navbar colour). */
+header::before,
+header::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    width: var(--nav-corner);
+    height: var(--nav-corner);
+    pointer-events: none;
+}
+header::before {
+    left: 0;
+    background: radial-gradient(circle at 100% 100%, transparent calc(var(--nav-corner) - .5px), var(--bg-header) var(--nav-corner));
+}
+header::after {
+    right: 0;
+    background: radial-gradient(circle at 0 100%, transparent calc(var(--nav-corner) - .5px), var(--bg-header) var(--nav-corner));
+}
+@media (max-width: 767.98px) { header { --nav-corner: 16px; } }
 
 /* Thin top-loading bar — shows during agent soft-switch / navigation */
 #nav-progress-bar {
@@ -639,7 +689,7 @@ footer {
 
 .score-badge {
     padding: 0.25rem 0.75rem;
-    border-radius: 20px;
+    border-radius: 14px;
     font-size: 0.8rem;
     font-weight: 500;
 }
@@ -697,9 +747,26 @@ footer {
         position: relative;
     }
 
+    /* Left cluster hugs the toggle; hamburger gets the same round, tinted wrapper as the toggle */
+    .header-left-side { gap: 0.5rem !important; }
+    .brand-version { display: none; }
     .nav-toggle {
-        display: block;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 40px;
+        height: 40px;
+        padding: 0;
+        margin-right: -4px;   /* mirrors the toggle's 12px inset so both circles sit 12px from the screen edge */
+        border-radius: 50%;
+        background: rgba(100, 116, 139, 0.10);
+        -webkit-tap-highlight-color: transparent;
+        transition: background 0.15s ease, transform 0.12s ease;
     }
+    .nav-toggle:hover { background: rgba(100, 116, 139, 0.20); }
+    .nav-toggle:active { transform: scale(0.94); }
+    html.dark .nav-toggle { background: rgba(148, 163, 184, 0.10); }
+    html.dark .nav-toggle:hover { background: rgba(148, 163, 184, 0.20); }
 
     nav {
         display: none;
@@ -1187,3 +1254,414 @@ html.dark .chat-img-skeleton {
     opacity: 0;
     transition: opacity 0.35s ease;
 }
+
+/* ==================== Chat Typography Hierarchy ====================
+   The chat mixes rem-based Tailwind utilities (the user's own message bubble
+   and the composer) with hard-coded px sizes on the agent reasoning/timeline
+   lines.  rem resolves against the ROOT font size — i.e. the browser's default
+   font-size setting, which is 16px only while it is left at "Medium" — while
+   the px sizes never change.  With a smaller default font size the message the
+   user typed shrank down to the size of the reasoning text, so the reasoning
+   block looked as large as (or larger than) the user's own text.
+
+   Pinning both tiers in rem keeps their ratio identical at any root font size:
+       primary   0.9375rem   user message + composer          (15px @ 16px root)
+       secondary 0.6875rem   collapsed reasoning/timeline lines (11px @ 16px)
+
+   These rules are intentionally unlayered: unlayered author CSS wins over
+   Tailwind's @layer utilities, so they hold without rebuilding Tailwind. */
+
+/* ── Primary: the user's own message and the composer ── */
+#chat-messages div[data-msg-role="user"] > div > div,
+#chat-input,
+#chat-editor-textarea {
+    font-size: 0.9375rem;
+}
+
+/* ── Secondary: the collapsed reasoning / tool-call summary lines ──
+   Only the summary span of a timeline row (always its last child, after the
+   chevron, emoji and optional status) and the live "Thinking..." row, so the
+   expanded detail, timer, chevrons, attachment names and artifact strip are
+   left untouched. */
+#chat-messages .timeline-entry > div:not(.tl-detail) > span:last-child,
+#chat-messages .tl-thinking-pending > span:last-child {
+    font-size: 0.6875rem;
+}
+
+/* Live (streamed) thinking row in the chat timeline: same left rail as the other entries, plain text (no bubble), fading tail */
+#chat-messages .tl-thinking-live { border-left: 2px solid #c4b5fd; animation: tl-rail 1.8s ease-in-out infinite; }
+@keyframes tl-rail { 50% { border-left-color: #a855f7; } }
+#chat-messages .tl-thinking-live .tl-live-head { display: flex; align-items: center; gap: .375rem; margin-left: 1.125rem; font-size: 11px; font-weight: 600; color: #a855f7; }
+#chat-messages .tl-thinking-live .tl-live-label { background: linear-gradient(90deg, #a855f7 0%, #e9d5ff 50%, #a855f7 100%); background-size: 200% 100%;
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; animation: tl-shimmer 1.8s linear infinite; }
+@keyframes tl-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+#chat-messages .tl-thinking-live .tl-live-dots { display: inline-flex; gap: 3px; margin-left: .125rem; }
+#chat-messages .tl-thinking-live .tl-live-dots i { width: 4px; height: 4px; border-radius: 50%; background: currentColor; opacity: .25; animation: tl-dot 1.2s ease-in-out infinite; }
+#chat-messages .tl-thinking-live .tl-live-dots i:nth-child(2) { animation-delay: .15s; }
+#chat-messages .tl-thinking-live .tl-live-dots i:nth-child(3) { animation-delay: .3s; }
+@keyframes tl-dot { 40% { opacity: 1; transform: translateY(-2px); } }
+#chat-messages .tl-thinking-live .tl-live-body { position: relative; margin: .375rem 0 .125rem 1.125rem; max-height: 6.5rem; overflow-y: auto; scrollbar-width: none; padding: 0;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 1.25rem); mask-image: linear-gradient(to bottom, transparent 0, #000 1.25rem); }
+#chat-messages .tl-thinking-live .tl-live-body::-webkit-scrollbar { display: none; }
+#chat-messages .tl-thinking-live .tl-live-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.55; font-style: italic; color: #6b21a8; }
+#chat-messages .tl-thinking-live .tl-live-text::after { content: ""; display: inline-block; width: 2px; height: 1em; margin-left: 2px; vertical-align: -.15em; border-radius: 1px; background: currentColor; animation: tl-caret 1s steps(1) infinite; }
+html.dark #chat-messages .tl-thinking-live { border-left-color: #a78bfa; }
+html.dark #chat-messages .tl-thinking-live .tl-live-head { color: #c4b5fd; }
+html.dark #chat-messages .tl-thinking-live .tl-live-label { background-image: linear-gradient(90deg, #c4b5fd 0%, #ffffff 50%, #c4b5fd 100%); }
+html.dark #chat-messages .tl-thinking-live .tl-live-text { color: #ddd6fe; }
+@keyframes tl-caret { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  #chat-messages .tl-thinking-live, #chat-messages .tl-thinking-live .tl-live-label, #chat-messages .tl-thinking-live .tl-live-dots i, #chat-messages .tl-thinking-live .tl-live-text::after { animation: none; }
+  #chat-messages .tl-thinking-live .tl-live-dots i { opacity: .6; }
+}
+
+/* Message time under chat bubbles (agent page) */
+#chat-messages time { display: block; margin: .25rem .75rem 0; padding: 0; font-size: 11px; line-height: 1rem; letter-spacing: .01em; font-variant-numeric: tabular-nums;
+  color: #9ca3af; opacity: .85; user-select: none; transition: opacity .15s ease; }
+#chat-messages time:hover { opacity: 1; }
+html.dark #chat-messages time { color: #8b97ab; }
+
+/* ── Mobile navigation: floating glass panel, left-aligned icon rows, pill-shaped active item ── */
+.nav-ic, .nav-sep, #nav-backdrop, .nav-version { display: none; }
+@media (max-width: 768px) {
+  #nav-backdrop { display: block; position: fixed; inset: 0; z-index: -2; background: rgb(2 6 23 / .5); opacity: 0; visibility: hidden;
+    -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px); transition: opacity .2s ease, visibility 0s linear .2s; }
+  body.nav-menu-open #nav-backdrop { opacity: 1; visibility: visible; transition: opacity .2s ease; }
+  .header-left-side, .nav-toggle { position: relative; z-index: 3; }
+
+  /* The menu is part of the navbar: no panel of its own. The glass layer (.header-glass) grows by --nav-extra (set from JS to
+     the menu's height) so navbar + menu are ONE surface, with the inverted corners at the bottom of the whole thing. */
+  nav#site-nav { display: flex; flex-direction: column; align-items: stretch; gap: .125rem; position: absolute; z-index: 2;
+    top: 100%; left: 0; right: 0; padding: .25rem .75rem .75rem; margin: 0; background: none; border: 0; border-radius: 0; box-shadow: none;
+    max-height: calc(100vh - 56px - var(--nav-corner) - 1rem); overflow-y: auto; scrollbar-width: none;
+    visibility: hidden; opacity: 0; transform: translateY(-6px); pointer-events: none;
+    transition: opacity .12s ease, transform .2s ease, visibility 0s linear .2s; }
+  nav#site-nav::-webkit-scrollbar { display: none; }
+  nav#site-nav.nav-open { visibility: visible; opacity: 1; transform: none; pointer-events: auto;
+    transition: opacity .2s ease .06s, transform .24s cubic-bezier(.2, .8, .2, 1) .04s; }
+
+  nav#site-nav a { display: flex; align-items: center; justify-content: flex-start; gap: .75rem; padding: .6875rem .875rem; border-radius: 9999px;
+    font-size: .9375rem; text-align: left; }
+  nav#site-nav a .nav-ic { display: block; flex: none; opacity: .75; }
+  nav#site-nav a .nav-label { flex: 1 1 auto; min-width: 0; }
+  nav#site-nav a #wa-disconnect-badge { margin-left: auto; }
+  nav#site-nav a.nav-active { background: rgb(99 102 241 / .12); color: #4f46e5; }
+  nav#site-nav a.nav-active .nav-ic { opacity: 1; }
+  html.dark nav#site-nav a.nav-active { background: rgb(99 102 241 / .22); color: #c7d2fe; }
+  nav#site-nav .nav-sep, nav#site-nav .nav-divider { display: block; height: 0; margin: .375rem .75rem; border: 0; border-top: 1px solid rgb(148 163 184 / .25); }
+  /* version info lives at the bottom of the menu on mobile (the brand's own version tag is hidden there) */
+  nav#site-nav .nav-version { display: flex; align-items: center; justify-content: center; gap: .375rem; margin: .5rem 0 0; padding-top: .5rem;
+    font-size: .6875rem; letter-spacing: .02em; color: #94a3b8; opacity: .8; user-select: none; }
+  nav#site-nav .nav-version span { padding: .0625rem .4rem; border-radius: 9999px; background: rgb(148 163 184 / .14); font-variant-numeric: tabular-nums; }
+  nav#site-nav a.nav-logout { display: flex; margin: 0; padding-top: .6875rem; color: #dc2626 !important; font-weight: 600; opacity: 1; }
+  nav#site-nav a.nav-logout:hover { background: rgb(239 68 68 / .1); }
+  html.dark nav#site-nav a.nav-logout { color: #fca5a5 !important; }
+  html.dark nav#site-nav a.nav-logout:hover { background: rgb(239 68 68 / .16); }
+}
+@media (prefers-reduced-motion: reduce) {
+  nav#site-nav, nav#site-nav.nav-open, #nav-backdrop, .header-glass { transition: none; }
+}
+
+/* ── Mobile navbar: translucent glass (same recipe as the floating agent-name pill in the chat), page scrolls under it ──
+   The blur lives on a separate layer (.header-glass), NOT on <header>: backdrop-filter on the header would turn it into the
+   containing block of the fixed menu backdrop. The layer is masked to the navbar shape, including the two inverted corners. */
+.header-glass { display: none; }
+@media (max-width: 768px) {
+  header { --header-glass: rgb(255 255 255 / .66); background: transparent; box-shadow: none; }
+  html.dark header { --header-glass: rgb(17 24 39 / .6); background: transparent; }
+  header::before, header::after { display: none; }
+  .header-glass { display: block; position: absolute; left: 0; right: 0; top: 0; z-index: -1; pointer-events: none;
+    height: calc(100% + var(--nav-extra, 0px) + var(--nav-corner)); background: var(--header-glass);
+    transition: height .26s cubic-bezier(.2, .8, .2, 1);
+    -webkit-backdrop-filter: blur(10px) saturate(1.2); backdrop-filter: blur(10px) saturate(1.2);
+    -webkit-mask-image: linear-gradient(#000, #000),
+      radial-gradient(circle at 100% 100%, transparent calc(var(--nav-corner) - .5px), #000 var(--nav-corner)),
+      radial-gradient(circle at 0 100%, transparent calc(var(--nav-corner) - .5px), #000 var(--nav-corner));
+    mask-image: linear-gradient(#000, #000),
+      radial-gradient(circle at 100% 100%, transparent calc(var(--nav-corner) - .5px), #000 var(--nav-corner)),
+      radial-gradient(circle at 0 100%, transparent calc(var(--nav-corner) - .5px), #000 var(--nav-corner));
+    -webkit-mask-size: 100% calc(100% - var(--nav-corner)), var(--nav-corner) var(--nav-corner), var(--nav-corner) var(--nav-corner);
+    mask-size: 100% calc(100% - var(--nav-corner)), var(--nav-corner) var(--nav-corner), var(--nav-corner) var(--nav-corner);
+    -webkit-mask-position: 0 0, 0 100%, 100% 100%; mask-position: 0 0, 0 100%, 100% 100%;
+    -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat; }
+}
+
+/* ── Dark theme: colours inside the chat message box follow the login palette (slate surfaces, indigo accent) ── */
+html.dark #chat-messages .chat-prose.rounded-2xl { background: rgb(30 41 59 / .7); border-color: rgb(148 163 184 / .18); }   /* agent reply bubble */
+html.dark #chat-messages .rounded-2xl.bg-indigo-500 { background: #4f46e5; }                                              /* your message: the login's accent */
+html.dark #chat-messages .rounded-2xl.dark\:bg-gray-800 { background: rgb(30 41 59 / .7); border-color: rgb(148 163 184 / .18); }   /* Sessions: human side */
+html.dark .chat-prose code { background: rgb(10 15 28 / .55); }
+html.dark .chat-prose pre { background: rgb(10 15 28 / .72); border: 1px solid rgb(148 163 184 / .14); }
+html.dark .chat-prose pre code { background: none; }
+html.dark .chat-prose blockquote { border-left-color: rgb(129 140 248 / .5); }
+html.dark .chat-prose th, html.dark .chat-prose td { border-color: rgb(148 163 184 / .2); }
+html.dark .chat-prose th { background: rgb(148 163 184 / .08); }
+html.dark .chat-prose a { color: #a5b4fc; }
+
+/* ── Toasts (static/js/ev-toast.js): glass pills under the navbar, theme-aware ── */
+.ev-toasts { position: fixed; top: 4.25rem; right: 1rem; z-index: 10000; display: flex; flex-direction: column; align-items: flex-end; gap: .5rem;
+  width: min(24rem, calc(100vw - 1.5rem)); pointer-events: none; }
+@media (max-width: 767.98px) { .ev-toasts { right: .75rem; } }
+.ev-toast { pointer-events: auto; position: relative; display: flex; align-items: center; gap: .75rem; max-width: 100%; box-sizing: border-box; padding: .5rem; border-radius: 1rem;
+  background: rgb(255 255 255 / .92); color: #111827; border: 1px solid rgb(148 163 184 / .35);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2); backdrop-filter: blur(14px) saturate(1.2);
+  box-shadow: 0 1px 2px rgb(15 23 42 / .06), 0 14px 32px -12px rgb(15 23 42 / .35);
+  opacity: 0; transform: translateX(1.25rem) scale(.97); transition: opacity .2s ease, transform .26s cubic-bezier(.2, .8, .2, 1); }
+html.dark .ev-toast { background: rgb(39 49 71 / .94); color: #f8fafc; border-color: rgb(148 163 184 / .32); box-shadow: 0 1px 2px rgb(0 0 0 / .3), 0 14px 32px -12px rgb(0 0 0 / .7); }
+.ev-toast.is-in { opacity: 1; transform: none; }
+.ev-toast.is-out { opacity: 0; transform: translateX(1rem) scale(.97); }
+.ev-toast.is-bump { animation: ev-toast-bump .28s ease; }
+@keyframes ev-toast-bump { 40% { transform: scale(1.04); } }
+.ev-toast-ic { flex: none; width: 1.75rem; height: 1.75rem; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; }
+.ev-toast-ic svg { width: 15px; height: 15px; }
+.ev-toast-success .ev-toast-ic { background: rgb(16 185 129 / .16); color: #059669; }
+.ev-toast-error .ev-toast-ic { background: rgb(239 68 68 / .14); color: #dc2626; }
+.ev-toast-warning .ev-toast-ic { background: rgb(245 158 11 / .16); color: #d97706; }
+.ev-toast-info .ev-toast-ic { background: rgb(99 102 241 / .14); color: #4f46e5; }
+html.dark .ev-toast-success .ev-toast-ic { background: rgb(16 185 129 / .2); color: #6ee7b7; }
+html.dark .ev-toast-error .ev-toast-ic { background: rgb(239 68 68 / .2); color: #fca5a5; }
+html.dark .ev-toast-warning .ev-toast-ic { background: rgb(245 158 11 / .2); color: #fcd34d; }
+html.dark .ev-toast-info .ev-toast-ic { background: rgb(99 102 241 / .24); color: #c7d2fe; }
+.ev-toast-msg { flex: 1 1 auto; min-width: 0; padding: .125rem .25rem .125rem 0; font-size: .875rem; font-weight: 500; line-height: 1.35; overflow-wrap: anywhere; }
+.ev-toast-n { flex: none; padding: .0625rem .4375rem; border-radius: 9999px; background: rgb(148 163 184 / .2); font-size: .6875rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.ev-toast-x { flex: none; width: 1.75rem; height: 1.75rem; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 50%; background: transparent; color: #94a3b8; cursor: pointer; transition: background-color .15s, color .15s; }
+.ev-toast-x:hover { background: rgb(148 163 184 / .2); color: inherit; }
+.ev-toast-x svg { width: 14px; height: 14px; }
+@media (prefers-reduced-motion: reduce) { .ev-toast, .ev-toast.is-in, .ev-toast.is-out { transition: opacity .15s linear; transform: none; } .ev-toast.is-bump { animation: none; } }
+
+/* ── Combobox (static/js/ev-combobox.js): themed <select> with keyword filter ── */
+.ev-cb { position: relative; display: inline-block; max-width: 100%; min-width: 0; vertical-align: middle; }
+.ev-cb-block { display: block; width: 100%; }
+.ev-cb-inline .ev-cb-trigger, .ev-cb:not(.ev-cb-block) .ev-cb-trigger { width: auto; min-width: 8rem; }
+.ev-cb-native { display: none !important; }
+.ev-cb-trigger { display: flex; align-items: center; justify-content: space-between; gap: .5rem; width: 100%; padding: .625rem .875rem; border: 1px solid #d1d5db; border-radius: .625rem; background: #fff; color: #111827; font: inherit; font-size: .875rem; line-height: 1.25rem; text-align: left; cursor: pointer; transition: border-color .15s, box-shadow .15s; }
+.ev-cb-trigger:hover { border-color: #94a3b8; }
+.ev-cb-trigger:focus-visible, .ev-cb.is-open .ev-cb-trigger { outline: none; border-color: #6366f1; box-shadow: none; }
+.ev-cb-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ev-cb-label.is-placeholder { color: #94a3b8; }
+.ev-cb-chev { flex: none; display: inline-flex; color: #94a3b8; transition: transform .18s ease; }
+.ev-cb-chev svg { width: 16px; height: 16px; }
+.ev-cb.is-open .ev-cb-chev { transform: rotate(180deg); }
+.ev-cb.is-disabled .ev-cb-trigger { opacity: .55; cursor: not-allowed; }
+html.dark .ev-cb-trigger { background: rgb(10 15 28 / .65); border-color: rgb(148 163 184 / .28); color: #f1f5f9; }
+html.dark .ev-cb-trigger:hover { border-color: rgb(148 163 184 / .5); }
+html.dark .ev-cb-trigger:focus-visible, html.dark .ev-cb.is-open .ev-cb-trigger { border-color: #818cf8; box-shadow: none; }
+.ev-cb-pop { position: fixed; z-index: 10001; display: flex; flex-direction: column; box-sizing: border-box; padding: .375rem; border-radius: .75rem; background: rgb(255 255 255 / .97); border: 1px solid rgb(148 163 184 / .35);
+  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); box-shadow: 0 1px 2px rgb(15 23 42 / .06), 0 18px 40px -14px rgb(15 23 42 / .4);
+  opacity: 0; transform: translateY(-4px) scale(.985); transform-origin: top; transition: opacity .12s ease, transform .16s cubic-bezier(.2, .8, .2, 1); }
+.ev-cb-pop.is-up { transform-origin: bottom; transform: translateY(4px) scale(.985); }
+.ev-cb-pop.is-in { opacity: 1; transform: none; }
+html.dark .ev-cb-pop { background: rgb(30 41 59 / .97); border-color: rgb(148 163 184 / .3); box-shadow: 0 1px 2px rgb(0 0 0 / .3), 0 18px 40px -14px rgb(0 0 0 / .75); }
+.ev-cb-search { position: relative; flex: none; margin: .125rem .125rem .375rem; }
+.ev-cb-search svg { position: absolute; left: .75rem; top: 50%; width: 15px; height: 15px; transform: translateY(-50%); color: #94a3b8; pointer-events: none; }
+.ev-cb-search input { width: 100%; box-sizing: border-box; height: 2.25rem; padding: 0 .75rem 0 2.125rem; border: 1px solid rgb(148 163 184 / .35); border-radius: .75rem; background: rgb(148 163 184 / .1); color: inherit; font: inherit; font-size: .8125rem; outline: none; }
+.ev-cb-search input:focus { outline: none; border-color: #6366f1; box-shadow: none; }
+html.dark .ev-cb-search input { color: #f1f5f9; }
+.ev-cb-list { overflow-y: auto; overscroll-behavior: contain; min-height: 0; scrollbar-width: thin; }
+.ev-cb-group { padding: .5rem .625rem .25rem; font-size: .6875rem; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: #94a3b8; }
+.ev-cb-opt { display: flex; align-items: center; justify-content: space-between; gap: .5rem; padding: .5rem .625rem; border-radius: .625rem; font-size: .875rem; color: #1f2937; cursor: pointer; }
+html.dark .ev-cb-opt { color: #e2e8f0; }
+.ev-cb-opt.in-group { padding-left: 1.5rem; }   /* options inside a group heading are indented under it */
+.ev-cb-opt.is-active { background: rgb(99 102 241 / .1); }
+html.dark .ev-cb-opt.is-active { background: rgb(99 102 241 / .22); }
+.ev-cb-opt.is-selected { font-weight: 600; color: #4f46e5; }
+html.dark .ev-cb-opt.is-selected { color: #c7d2fe; }
+.ev-cb-opt.is-disabled { opacity: .45; cursor: not-allowed; }
+.ev-cb-opt-main { display: flex; flex-direction: column; min-width: 0; }
+.ev-cb-opt-text { overflow-wrap: anywhere; }
+.ev-cb-opt-desc { margin-top: .125rem; font-size: .75rem; font-weight: 400; color: #94a3b8; overflow-wrap: anywhere; }
+.ev-cb-opt mark { background: rgb(250 204 21 / .35); color: inherit; border-radius: .2rem; padding: 0 .0625rem; }
+.ev-cb-tick { flex: none; display: none; width: 16px; height: 16px; color: #6366f1; }
+.ev-cb-opt.is-selected .ev-cb-tick { display: inline-flex; }
+.ev-cb-tick svg { width: 16px; height: 16px; }
+.ev-cb-empty { padding: 1rem .75rem; text-align: center; font-size: .8125rem; color: #94a3b8; }
+@media (prefers-reduced-motion: reduce) { .ev-cb-pop, .ev-cb-pop.is-up { transition: opacity .1s linear; transform: none; } }
+
+/* ── Alerts: one look for every notice/banner (component .ag-alert, plus a restyle of the legacy Tailwind bg-X-50 + border-X-200 boxes) ── */
+.ag-alert { display: flex; align-items: flex-start; gap: .875rem; flex: none; margin-bottom: 1rem; padding: .875rem 1rem; border: 1px solid; border-radius: .875rem; }
+.ag-alert.hidden { display: none; }
+.ag-alert-ic { flex: none; width: 2rem; height: 2rem; display: inline-flex; align-items: center; justify-content: center; border-radius: .625rem; }
+.ag-alert-ic svg { width: 17px; height: 17px; }
+.ag-alert-body { flex: 1 1 auto; min-width: 0; align-self: center; }
+.ag-alert-t { margin: 0; font-size: .875rem; font-weight: 600; line-height: 1.3; }
+.ag-alert-s { margin: .25rem 0 0; font-size: .8125rem; line-height: 1.5; }
+.ag-alert-s code { padding: .0625rem .4375rem; border-radius: .375rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .75rem; overflow-wrap: anywhere; }
+.ag-alert-btn { flex: none; align-self: center; padding: .4375rem .875rem; border: 1px solid; border-radius: .625rem; background: transparent; font-size: .75rem; font-weight: 600; white-space: nowrap; cursor: pointer; transition: background-color .15s; }
+html.dark html.dark html.dark html.dark html.dark html.dark .ag-note { margin-top: .5rem; padding: .5rem .75rem; border: 1px solid #f0d9a3; border-radius: .625rem; background: #fff8e6; color: #92400e; font-size: .75rem; line-height: 1.45; }
+.ag-note.hidden { display: none; }
+html.dark .ag-note { background: rgb(245 158 11 / .08); border-color: rgb(245 158 11 / .3); color: #e6c27a; }
+.ag-alert-warn { background: #fff8e6; border-color: #f0d9a3; color: #92400e; }
+.ag-alert-warn .ag-alert-ic { background: #fdecc0; color: #b45309; }
+.ag-alert-warn .ag-alert-s { color: #a8590f; }
+.ag-alert-warn .ag-alert-s code { background: #fdecc0; color: #92400e; }
+.ag-alert-warn .ag-alert-btn { border-color: #f0d9a3; color: #92400e; }
+.ag-alert-warn .ag-alert-btn:hover { background: #fdecc0; }
+html.dark .ag-alert-warn { background: rgb(245 158 11 / .09); border-color: rgb(245 158 11 / .3); color: #fcd34d; }
+html.dark .ag-alert-warn .ag-alert-ic { background: rgb(245 158 11 / .18); color: #fbbf24; }
+html.dark .ag-alert-warn .ag-alert-s { color: #e6c27a; }
+html.dark .ag-alert-warn .ag-alert-s code { background: rgb(245 158 11 / .16); color: #fcd34d; }
+html.dark .ag-alert-warn .ag-alert-btn { border-color: rgb(245 158 11 / .4); color: #fcd34d; }
+html.dark .ag-alert-warn .ag-alert-btn:hover { background: rgb(245 158 11 / .14); }
+/* legacy boxes: bg-amber-50 + border-amber-200 */
+.bg-amber-50.border-amber-200 { background: #fff8e6; border-color: #f0d9a3; border-radius: .75rem; }
+html.dark .bg-amber-50.border-amber-200 { background: rgb(245 158 11 / .09) !important; border-color: rgb(245 158 11 / .3) !important; color: #fcd34d !important; }
+html.dark .bg-amber-50.border-amber-200 [class*="text-amber-"] { color: #fcd34d !important; }
+html.dark .bg-amber-50.border-amber-200 code { background: rgb(245 158 11 / .16) !important; color: #fcd34d !important; }
+.ag-alert-info { background: #eff6ff; border-color: #bcd3f5; color: #1e40af; }
+.ag-alert-info .ag-alert-ic { background: #dbeafe; color: #1d4ed8; }
+.ag-alert-info .ag-alert-s { color: #2b56b8; }
+.ag-alert-info .ag-alert-s code { background: #dbeafe; color: #1e40af; }
+.ag-alert-info .ag-alert-btn { border-color: #bcd3f5; color: #1e40af; }
+.ag-alert-info .ag-alert-btn:hover { background: #dbeafe; }
+html.dark .ag-alert-info { background: rgb(59 130 246 / .09); border-color: rgb(59 130 246 / .3); color: #93c5fd; }
+html.dark .ag-alert-info .ag-alert-ic { background: rgb(59 130 246 / .18); color: #93c5fd; }
+html.dark .ag-alert-info .ag-alert-s { color: #a9c9f8; }
+html.dark .ag-alert-info .ag-alert-s code { background: rgb(59 130 246 / .16); color: #93c5fd; }
+html.dark .ag-alert-info .ag-alert-btn { border-color: rgb(59 130 246 / .4); color: #93c5fd; }
+html.dark .ag-alert-info .ag-alert-btn:hover { background: rgb(59 130 246 / .14); }
+/* legacy boxes: bg-blue-50 + border-blue-200 */
+.bg-blue-50.border-blue-200 { background: #eff6ff; border-color: #bcd3f5; border-radius: .75rem; }
+html.dark .bg-blue-50.border-blue-200 { background: rgb(59 130 246 / .09) !important; border-color: rgb(59 130 246 / .3) !important; color: #93c5fd !important; }
+html.dark .bg-blue-50.border-blue-200 [class*="text-blue-"] { color: #93c5fd !important; }
+html.dark .bg-blue-50.border-blue-200 code { background: rgb(59 130 246 / .16) !important; color: #93c5fd !important; }
+.ag-alert-danger { background: #fef2f2; border-color: #f5c2c2; color: #991b1b; }
+.ag-alert-danger .ag-alert-ic { background: #fee2e2; color: #dc2626; }
+.ag-alert-danger .ag-alert-s { color: #b02a2a; }
+.ag-alert-danger .ag-alert-s code { background: #fee2e2; color: #991b1b; }
+.ag-alert-danger .ag-alert-btn { border-color: #f5c2c2; color: #991b1b; }
+.ag-alert-danger .ag-alert-btn:hover { background: #fee2e2; }
+html.dark .ag-alert-danger { background: rgb(239 68 68 / .09); border-color: rgb(239 68 68 / .3); color: #fca5a5; }
+html.dark .ag-alert-danger .ag-alert-ic { background: rgb(239 68 68 / .18); color: #fca5a5; }
+html.dark .ag-alert-danger .ag-alert-s { color: #f3b4b4; }
+html.dark .ag-alert-danger .ag-alert-s code { background: rgb(239 68 68 / .16); color: #fca5a5; }
+html.dark .ag-alert-danger .ag-alert-btn { border-color: rgb(239 68 68 / .4); color: #fca5a5; }
+html.dark .ag-alert-danger .ag-alert-btn:hover { background: rgb(239 68 68 / .14); }
+/* legacy boxes: bg-red-50 + border-red-200 */
+.bg-red-50.border-red-200 { background: #fef2f2; border-color: #f5c2c2; border-radius: .75rem; }
+html.dark .bg-red-50.border-red-200 { background: rgb(239 68 68 / .09) !important; border-color: rgb(239 68 68 / .3) !important; color: #fca5a5 !important; }
+html.dark .bg-red-50.border-red-200 [class*="text-red-"] { color: #fca5a5 !important; }
+html.dark .bg-red-50.border-red-200 code { background: rgb(239 68 68 / .16) !important; color: #fca5a5 !important; }
+.ag-alert-ok { background: #f0fdf4; border-color: #bde5cb; color: #166534; }
+.ag-alert-ok .ag-alert-ic { background: #dcfce7; color: #15803d; }
+.ag-alert-ok .ag-alert-s { color: #1e7a40; }
+.ag-alert-ok .ag-alert-s code { background: #dcfce7; color: #166534; }
+.ag-alert-ok .ag-alert-btn { border-color: #bde5cb; color: #166534; }
+.ag-alert-ok .ag-alert-btn:hover { background: #dcfce7; }
+html.dark .ag-alert-ok { background: rgb(34 197 94 / .09); border-color: rgb(34 197 94 / .3); color: #86efac; }
+html.dark .ag-alert-ok .ag-alert-ic { background: rgb(34 197 94 / .18); color: #86efac; }
+html.dark .ag-alert-ok .ag-alert-s { color: #a6efc0; }
+html.dark .ag-alert-ok .ag-alert-s code { background: rgb(34 197 94 / .16); color: #86efac; }
+html.dark .ag-alert-ok .ag-alert-btn { border-color: rgb(34 197 94 / .4); color: #86efac; }
+html.dark .ag-alert-ok .ag-alert-btn:hover { background: rgb(34 197 94 / .14); }
+/* legacy boxes: bg-green-50 + border-green-200 */
+.bg-green-50.border-green-200 { background: #f0fdf4; border-color: #bde5cb; border-radius: .75rem; }
+html.dark .bg-green-50.border-green-200 { background: rgb(34 197 94 / .09) !important; border-color: rgb(34 197 94 / .3) !important; color: #86efac !important; }
+html.dark .bg-green-50.border-green-200 [class*="text-green-"] { color: #86efac !important; }
+html.dark .bg-green-50.border-green-200 code { background: rgb(34 197 94 / .16) !important; color: #86efac !important; }
+@media (max-width: 599.98px) { .ag-alert { flex-wrap: wrap; } .ag-alert-btn { margin-left: 2.875rem; } }
+
+/* compact selects (toolbars, tables, inline controls) */
+.ev-cb-sm .ev-cb-trigger { padding: .3125rem .625rem; font-size: .75rem; line-height: 1.25rem; border-radius: .5rem; min-width: 5rem; }
+.ev-cb-sm .ev-cb-chev svg { width: 14px; height: 14px; }
+/* "Group by" pill in the Tools / Skills toolbars */
+.tbl-group-ctl .ev-cb { display: inline-block; }
+.tbl-group-ctl .ev-cb-trigger { height: 44px; padding: 0 1rem 0 2.25rem; border-radius: 9999px; font-size: .75rem; font-weight: 500; }
+
+/* ── Modals: one card style (used by the Agents page dialogs; same look as the Variables dialog) ── */
+.ev-modal { background: #fff; border: 1px solid rgb(148 163 184 / .3); border-radius: 1rem; box-shadow: 0 24px 60px -20px rgb(15 23 42 / .5); }
+html.dark .ev-modal { background: #111827; }
+.ev-modal-t { margin: 0; font-size: 1.0625rem; font-weight: 600; color: #111827; }
+html.dark .ev-modal-t { color: #f1f5f9; }
+.ev-modal-s { margin: .25rem 0 1.25rem; font-size: .8125rem; color: #94a3b8; }
+.ev-req { color: #6366f1; font-weight: 700; }
+.ev-modal-btns { display: flex; justify-content: flex-end; gap: .625rem; }
+.ev-btn { padding: .5rem 1rem; border: 1px solid rgb(148 163 184 / .35); border-radius: .625rem; background: transparent; color: #475569; font-size: .8125rem; font-weight: 600; cursor: pointer; transition: background-color .15s; }
+.ev-btn:hover { background: rgb(148 163 184 / .14); }
+html.dark .ev-btn { color: #cbd5e1; }
+.ev-btn-primary { border-color: transparent; background: #6366f1; color: #fff; }
+.ev-btn-primary:hover { background: #4f46e5; }
+html.dark .ev-btn-primary { color: #fff; }
+.ev-btn:disabled { opacity: .55; cursor: not-allowed; }
+.ev-modal input[type="text"], .ev-modal input[type="number"], .ev-modal input[type="password"], .ev-modal textarea { border-radius: .625rem; }
+
+/* ── Keyboard shortcut hints + cheat sheet (static/js/ev-shortcuts.js) ── */
+.ev-kbd { display: inline-flex; align-items: center; justify-content: center; min-width: 1.25rem; height: 1.25rem; padding: 0 .3125rem; border: 1px solid rgb(148 163 184 / .4); border-bottom-width: 2px; border-radius: .375rem; background: rgb(148 163 184 / .12); color: #64748b; font: 600 .6875rem/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0; text-transform: none; box-sizing: border-box; }
+html.dark .ev-kbd { color: #94a3b8; }
+.ev-kbd-field { position: absolute; right: .75rem; top: 50%; transform: translateY(-50%); pointer-events: none; }
+.ev-kbd-field:has(+ *), .ev-kbd-field { z-index: 1; }
+input:focus + .ev-kbd-field, input:not(:placeholder-shown) + .ev-kbd-field { display: none; }
+.ev-kbd-btn { margin-left: .125rem; border-color: rgb(255 255 255 / .35); background: rgb(255 255 255 / .16); color: inherit; opacity: .85; }
+.ag-btn-ghost .ev-kbd-btn, .ev-btn:not(.ev-btn-primary) .ev-kbd-btn { border-color: rgb(148 163 184 / .4); background: rgb(148 163 184 / .12); }
+/* shortcut key on a filled (primary) button: white key cap on the coloured fill — the dark-mode grey from .ev-kbd made it unreadable */
+.ev-btn-primary .ev-kbd-btn, .ag-btn-primary .ev-kbd-btn, html.dark .ev-btn-primary .ev-kbd-btn, html.dark .ag-btn-primary .ev-kbd-btn { color: #fff; opacity: 1; background: rgb(255 255 255 / .22); border-color: rgb(255 255 255 / .5); text-shadow: 0 1px 0 rgb(0 0 0 / .18); }
+@media (max-width: 767.98px), (hover: none) { .ev-kbd { display: none !important; } }
+.ev-keys { position: fixed; right: 1rem; bottom: 1rem; z-index: 10002; width: min(22rem, calc(100vw - 2rem)); padding: 1rem 1.125rem; border: 1px solid rgb(148 163 184 / .3); border-radius: 1rem; background: rgb(255 255 255 / .96); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); box-shadow: 0 18px 44px -14px rgb(15 23 42 / .45); }
+html.dark .ev-keys { background: rgb(30 41 59 / .96); }
+.ev-keys-t { margin: 0 0 .625rem; font-size: .75rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #94a3b8; }
+.ev-keys-r { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .3125rem 0; font-size: .8125rem; color: #334155; }
+html.dark .ev-keys-r { color: #e2e8f0; }
+.ev-keys-k { display: inline-flex; gap: .25rem; flex: none; }
+.ev-keys-r > span:last-child { text-align: right; min-width: 0; }
+.ev-keys .ev-kbd { display: inline-flex !important; }
+
+/* ── Desktop navbar: a single animated underline replaces the hover pill and the per-link underline ── */
+.nav-ink { display: none; }
+@media (min-width: 769px) {
+  nav#site-nav { position: relative; }
+  nav#site-nav a:hover { background-color: transparent; }
+  nav#site-nav a.nav-active::after { display: none; }
+  nav#site-nav a:focus-visible { outline: none; }
+  .nav-ink { display: block; position: absolute; left: 0; top: 0; width: 0; height: 2px; border-radius: 2px; background: #667eea; opacity: 0; pointer-events: none;
+    transition: transform .3s cubic-bezier(.3, .9, .4, 1), width .3s cubic-bezier(.3, .9, .4, 1), opacity .2s ease; will-change: transform, width; }
+  .nav-ink.is-on { opacity: 1; }
+  html.dark .nav-ink { background: #818cf8; }
+}
+@media (prefers-reduced-motion: reduce) { .nav-ink { transition: opacity .1s linear !important; } }
+
+/* ── Banners under the navbar (WhatsApp disconnect, update notice, system alerts): one dark-aware component ── */
+.ev-banner { border-bottom: 1px solid; font-size: .875rem; line-height: 1.4; }
+.ev-banner.hidden { display: none; }
+.ev-banner-in { max-width: 1600px; margin: 0 auto; padding: .5rem 1rem; display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
+.ev-banner-tx { display: flex; align-items: center; gap: .5rem; min-width: 0; }
+.ev-banner-ic { width: 16px; height: 16px; flex: none; }
+.ev-banner a { color: inherit; }
+.ev-banner a:hover { text-decoration-thickness: 2px; }
+.ev-banner-x { flex: none; width: 1.75rem; height: 1.75rem; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: .5rem; background: transparent; color: inherit; opacity: .6; cursor: pointer; transition: opacity .15s, background-color .15s; }
+.ev-banner-x:hover { opacity: 1; background: rgb(0 0 0 / .07); }
+html.dark .ev-banner-x:hover { background: rgb(255 255 255 / .1); }
+.ev-banner-x svg { width: 15px; height: 15px; }
+.ev-banner-warn { background: #fff8e6; border-color: #f0d9a3; color: #92400e; }
+.ev-banner-info { background: #eef2ff; border-color: #c7d2fe; color: #3730a3; }
+.ev-banner-ok { background: #f0fdf4; border-color: #bde5cb; color: #166534; }
+.ev-banner-danger { background: #fef2f2; border-color: #f5c2c2; color: #991b1b; }
+html.dark .ev-banner-warn { background: rgb(245 158 11 / .1); border-color: rgb(245 158 11 / .3); color: #fcd34d; }
+html.dark .ev-banner-info { background: rgb(99 102 241 / .12); border-color: rgb(129 140 248 / .32); color: #c7d2fe; }
+html.dark .ev-banner-ok { background: rgb(34 197 94 / .1); border-color: rgb(34 197 94 / .3); color: #86efac; }
+html.dark .ev-banner-danger { background: rgb(239 68 68 / .1); border-color: rgb(239 68 68 / .32); color: #fca5a5; }
+/* Banners that live under the navbar (update, WhatsApp, system alerts): same surface as the navbar, so the corners below
+   it stay seamless. The state is carried by tinted text and pill actions instead of a coloured fill. */
+header .ev-banner { --bn: 99 102 241; background: var(--bg-header); border-width: 1px 0 0; border-style: solid; border-color: rgb(148 163 184 / .16); }
+header .ev-banner.ev-banner-info { --bn: 99 102 241; background: var(--bg-header); border-color: rgb(148 163 184 / .16); color: #3730a3; }
+header .ev-banner.ev-banner-warn { --bn: 245 158 11; background: var(--bg-header); border-color: rgb(148 163 184 / .16); color: #92400e; }
+header .ev-banner.ev-banner-ok { --bn: 34 197 94; background: var(--bg-header); border-color: rgb(148 163 184 / .16); color: #166534; }
+header .ev-banner.ev-banner-danger { --bn: 239 68 68; background: var(--bg-header); border-color: rgb(148 163 184 / .16); color: #991b1b; }
+html.dark header .ev-banner.ev-banner-info { background: var(--bg-header); border-color: rgb(148 163 184 / .14); color: #c7d2fe; }
+html.dark header .ev-banner.ev-banner-warn { background: var(--bg-header); border-color: rgb(148 163 184 / .14); color: #fcd34d; }
+html.dark header .ev-banner.ev-banner-ok { background: var(--bg-header); border-color: rgb(148 163 184 / .14); color: #86efac; }
+html.dark header .ev-banner.ev-banner-danger { background: var(--bg-header); border-color: rgb(148 163 184 / .14); color: #fca5a5; }
+header #ev-update-banner > div { padding-left: 1rem; padding-right: 1rem; }
+header #ev-update-banner-actions { gap: .375rem; }
+header #ev-update-banner-actions > a, header #ev-update-banner-actions > button:not([aria-label="Dismiss"]) {
+    margin-left: 0 !important; padding: .25rem .75rem; border: 0; border-radius: 9999px; background: rgb(var(--bn) / .16); color: inherit;
+    font-size: .8125rem; font-weight: 600; line-height: 1.25rem; text-decoration: none !important; cursor: pointer; transition: background-color .15s;
+}
+header #ev-update-banner-actions > a:hover, header #ev-update-banner-actions > button:not([aria-label="Dismiss"]):hover { background: rgb(var(--bn) / .3); }
+header #ev-update-banner-actions > button[aria-label="Dismiss"] { margin-left: .375rem !important; width: 1.75rem; height: 1.75rem; display: inline-flex; align-items: center; justify-content: center; border-radius: .5rem; opacity: .7; }
+header #ev-update-banner-actions > button[aria-label="Dismiss"]:hover { opacity: 1; background: rgb(var(--bn) / .16); }
+
+
+/* Legacy tinted boxes: when the box turns dark, any hard-coded gray text inside must lighten too (it used to stay #1f2937 on a dark tint) */
+html.dark .bg-amber-50.border-amber-200 :is([class*="text-gray-"], strong, b, a),
+html.dark .bg-blue-50.border-blue-200 :is([class*="text-gray-"], strong, b, a),
+html.dark .bg-red-50.border-red-200 :is([class*="text-gray-"], strong, b, a),
+html.dark .bg-green-50.border-green-200 :is([class*="text-gray-"], strong, b, a) { color: inherit !important; }

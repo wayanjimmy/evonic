@@ -9,6 +9,7 @@
 import { Lightbox } from './lightbox.js';
 import { setupImageForLazy, createLazyImage, retrofitImageForLazy } from './lazy-image.js';
 import { buildAttachmentCard } from './artifacts.js';
+import { uiIcon } from './icons.js';
 
 // ── Sanitizer ─────────────────────────────────────────────────────────────────
 
@@ -102,64 +103,15 @@ function normalizeTimestamp(timestamp) {
 
 // -- KaTeX math rendering ----------------------------------------------------------
 
-// Renders LaTeX math delimiters ($...$ and $$...$$) in HTML content.
-// Runs after marked.parse() and sanitize(), before DOM insertion.
-// Protects code blocks (<pre><code>) from accidental math rendering.
+// Renders LaTeX math delimiters in HTML content. Runs after marked.parse() and
+// before DOM insertion. The currency-safe rules live in js/markdown-math.js
+// (EvMarkdownMath.render) so chat, KB previews and template scripts share one
+// implementation; without that script math is simply left untouched.
 function renderMath(html) {
-    if (typeof katex === 'undefined') return html;
-    try {
-        return _renderMathImpl(html);
-    } catch (e) {
-        // Never let math rendering break the message pipeline
-        return html;
-    }
-}
-
-function _renderMathImpl(html) {
-
-    const codeBlocks = [];
-    // Protect <pre><code> blocks
-    let safe = (html || '').replace(
-        /<pre\b[^>]*>[\s\S]*?<\/pre>/gi,
-        function (match) {
-            codeBlocks.push(match);
-            return '\u0000CODE' + (codeBlocks.length - 1) + '\u0000';
-        }
-    );
-
-    // Protect inline <code> blocks
-    safe = safe.replace(
-        /<code\b[^>]*>[\s\S]*?<\/code>/gi,
-        function (match) {
-            codeBlocks.push(match);
-            return '\u0000CODE' + (codeBlocks.length - 1) + '\u0000';
-        }
-    );
-
-    // Render display math $$...$$ first
-    safe = safe.replace(/\$\$([\s\S]*?)\$\$/g, function (match, formula) {
-        try {
-            return katex.renderToString(formula, { displayMode: true, throwOnError: false });
-        } catch (e) {
-            return match;
-        }
-    });
-
-    // Render inline math $...$ (must not be preceded or followed by $)
-    safe = safe.replace(/(?<!\$)\$(?!\$)([\s\S]*?)(?<!\$)\$(?!\$)/g, function (match, formula) {
-        try {
-            return katex.renderToString(formula, { displayMode: false, throwOnError: false });
-        } catch (e) {
-            return match;
-        }
-    });
-
-    // Restore code blocks
-    safe = safe.replace(/\u0000CODE(\d+)\u0000/g, function (match, idx) {
-        return codeBlocks[parseInt(idx, 10)] || match;
-    });
-
-    return safe;
+    if (!html) return html || '';
+    const math = typeof window !== 'undefined' ? window.EvMarkdownMath : null;
+    if (math && typeof math.render === 'function') return math.render(html);
+    return html;
 }
 
 function truncateLine(text, max) {
@@ -470,6 +422,33 @@ export function highlightDiff(patch) {
 
 // ── Tool result rendering helpers ─────────────────────────────────────────────
 
+function _truncateToolResultText(value, maxLength = 240) {
+    const text = String(value);
+    return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
+}
+
+function _serializeToolResult(value) {
+    try {
+        return _truncateToolResultText(JSON.stringify(value));
+    } catch (error) {
+        return '[Unserializable tool result]';
+    }
+}
+
+function _extractToolError(result) {
+    if (!result || typeof result !== 'object') return null;
+    const error = result.error;
+    if (typeof error === 'string' && error.trim()) return error.trim();
+    if (!error || typeof error !== 'object') return null;
+
+    const message = typeof error.message === 'string' && error.message.trim() ? error.message.trim() : null;
+    const code = error.code === null || error.code === undefined ? null : _truncateToolResultText(error.code, 80);
+    if (message && code) return `${code}: ${message}`;
+    if (message) return message;
+    if (code) return code;
+    return _serializeToolResult(error);
+}
+
 function _summarizeToolResultValue(value) {
     // Preserve concise scalar arrays (such as validation reason_code) while
     // continuing to suppress nested objects and potentially verbose payloads.
@@ -489,6 +468,12 @@ function summarizeToolResult(result) {
     if (typeof result === 'object') {
         const keys = Object.keys(result);
         if (!keys.length) return 'OK';
+
+        const error = _extractToolError(result);
+        if (error) {
+            const status = result.status === null || result.status === undefined ? null : _truncateToolResultText(result.status, 80);
+            return status ? `${status}: ${error}` : error;
+        }
         if ('status' in result) {
             const s = String(result.status);
             return ('message' in result && String(result.message).length < 100)
@@ -502,10 +487,9 @@ function summarizeToolResult(result) {
             if (summary !== null) parts.push(`${k}: ${summary}`);
         }
         if (parts.length) return parts.join(' · ');
-        return `${keys.length} field${keys.length !== 1 ? 's' : ''}`;
+        return _serializeToolResult(result);
     }
-    const s = String(result);
-    return s.length > 120 ? s.slice(0, 117) + '...' : s;
+    return _truncateToolResultText(result, 120);
 }
 
 function _renderRunpyResult(r) {
@@ -514,7 +498,7 @@ function _renderRunpyResult(r) {
     const hasError  = r.exit_code !== 0;
     const statusColor = hasError ? 'text-red-600' : 'text-green-600';
     const statusBg    = hasError ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200';
-    const statusIcon  = hasError ? '&#10060;' : '&#9989;';
+    const statusIcon  = hasError ? uiIcon('x-circle', 12) : uiIcon('check-circle', 12);
     const $wrap = $('<div>');
     const $badge = $(`<div class="flex items-center gap-2 mb-1.5 text-[10px] font-mono border rounded px-2 py-1">`).addClass(statusColor).addClass(statusBg);
     $badge.append(
@@ -540,7 +524,7 @@ function _renderBashResult(r) {
     const hasError  = r.exit_code !== 0;
     const statusColor = hasError ? 'text-red-600' : 'text-green-600';
     const statusBg    = hasError ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200';
-    const statusIcon  = hasError ? '&#10060;' : '&#9989;';
+    const statusIcon  = hasError ? uiIcon('x-circle', 12) : uiIcon('check-circle', 12);
     const $wrap = $('<div>');
     const $badge = $(`<div class="flex items-center gap-2 mb-1.5 text-[10px] font-mono border rounded px-2 py-1">`).addClass(statusColor).addClass(statusBg);
     $badge.append(
@@ -688,8 +672,12 @@ function _renderRecallGraphResult(result) {
 export function buildToolResultDetail(ev) {
     if (ev.error) {
         let msg = typeof ev.error === 'string' && ev.error.length > 1 ? ev.error : null;
+        if (!msg && typeof ev.error === 'object') msg = _extractToolError({ error: ev.error });
         if (!msg && typeof ev.result === 'string') msg = ev.result;
-        if (!msg && ev.result && typeof ev.result === 'object') msg = ev.result.error || ev.result.message || null;
+        if (!msg && ev.result && typeof ev.result === 'object') {
+            msg = _extractToolError(ev.result)
+                || (typeof ev.result.message === 'string' ? ev.result.message : null);
+        }
         if (!msg) msg = 'Tool error';
         return $('<div class="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1 font-mono whitespace-pre-wrap">').text(msg);
     }
@@ -859,24 +847,24 @@ export function buildTimelineEntry(ev, isActive) {
     let borderClass, icon, label, labelClass, $summary, $detail, spinnerColor, extraAttrs = {};
 
     if (ev.type === 'thinking') {
-        borderClass = 'border-purple-300'; icon = '&#129504;'; label = 'Thinking'; labelClass = 'text-purple-500'; spinnerColor = '#a855f7';
+        borderClass = 'border-purple-300'; icon = uiIcon('brain', 14); label = 'Thinking'; labelClass = 'text-purple-500'; spinnerColor = '#a855f7';
         $summary = $('<span class="text-[11px] text-gray-400 truncate max-w-[780px]">').text(truncateLine(ev.content, 80));
         $detail = _buildThinkingContent(ev.content);
 
     } else if (ev.type === 'tool_call') {
-        borderClass = 'border-blue-300'; icon = '&#128295;'; label = 'Tool Call'; labelClass = 'text-blue-500'; spinnerColor = '#3b82f6';
+        borderClass = 'border-blue-300'; icon = uiIcon('wrench', 14); label = 'Tool Call'; labelClass = 'text-blue-500'; spinnerColor = '#3b82f6';
         extraAttrs['data-tool-type'] = 'tool_call';
         extraAttrs['data-tool-name'] = ev.tool;
         $summary = $('<span class="text-[11px] text-gray-400 truncate max-w-[780px]">').text(ev.tool + '(' + truncateLine(JSON.stringify(ev.args), 60) + ')');
         $detail = _buildToolCallDetail(ev.tool, ev.args || {}, ev.param_types || {});
 
     } else if (ev.type === 'response') {
-        borderClass = 'border-gray-300'; icon = '&#128172;'; label = 'Response'; labelClass = 'text-gray-500'; spinnerColor = '#6b7280';
+        borderClass = 'border-gray-300'; icon = uiIcon('message', 14); label = 'Response'; labelClass = 'text-gray-500'; spinnerColor = '#6b7280';
         $summary = $('<span class="text-[11px] text-gray-400 truncate max-w-[780px]">').text(truncateLine(ev.content, 80));
         $detail = $('<pre class="whitespace-pre-wrap dark:text-gray-200 break-words overflow-x-auto max-w-full text-[11px] text-gray-700">').text(ev.content);
 
     } else if (ev.type === 'retry') {
-        borderClass = 'border-yellow-300'; icon = '&#128260;'; label = 'Mencoba Ulang'; labelClass = 'text-yellow-600'; spinnerColor = '#f59e0b';
+        borderClass = 'border-yellow-300'; icon = uiIcon('retry', 14); label = 'Mencoba Ulang'; labelClass = 'text-yellow-600'; spinnerColor = '#f59e0b';
         $summary = $('<span class="text-[11px] text-gray-400 truncate max-w-[780px]">').text(ev.message || `Mencoba ulang... (${ev.retry_count}/${ev.max_retries})`);
         $detail = null;
 
@@ -896,7 +884,7 @@ export function buildTimelineEntry(ev, isActive) {
     }
 
     const $headerRow = $('<div class="flex items-center gap-1 cursor-pointer select-none">');
-    const $chev = $('<span class="tl-chev tool-trace-chevron text-[9px] text-gray-300">').html('&#9656;');
+    const $chev = $('<span class="tl-chev tool-trace-chevron text-gray-300">').html(uiIcon('chevron-right', 11));
     const $iconSpan = $('<span class="text-[10px] font-semibold">').addClass(labelClass).html(icon);
     $headerRow.append($chev, $iconSpan);
 
@@ -932,7 +920,7 @@ function _buildSysBalloon(tag, content, tagColorClass, fullColorClass, truncateL
     const $tagSpan = $('<span class="text-xs font-semibold mr-1.5">').addClass(tagColorClass).text(tag);
     const $preview = $('<span class="sys-balloon-content block">').append($tagSpan, document.createTextNode(truncated));
     $header.append($preview);
-    if (needsCollapse) $header.append($('<span class="sys-chevron text-[10px] flex-shrink-0 mt-0.5 ml-auto">').addClass(fullColorClass).html('&#9660;'));
+    if (needsCollapse) $header.append($('<span class="sys-chevron text-[10px] flex-shrink-0 mt-0.5 ml-auto">').addClass(fullColorClass).html(uiIcon('chevron-down', 12)));
 
     const $full = $('<div class="sys-balloon-full whitespace-pre-wrap">').css('display','none').append(
         $('<span class="text-xs font-semibold mr-1.5">').addClass(tagColorClass).text(tag),
@@ -1144,7 +1132,31 @@ function _addCopyButtons($bubble) {
     });
 }
 
+// Divider for a workplace switch note. The note's text is for the agent; the
+// user gets a compact "from → to" marker built from its metadata.
+function buildWorkplaceSwitchMarker(sw, opts, cfg) {
+    const name = side => (side && side.name) ? side.name : 'local workspace';
+    const $label = $('<span class="chat-wp-switch-label">')
+        .append(uiIcon('server', 12), ' Workplace switched: ')
+        .append($('<b>').text(name(sw.from)), ' → ', $('<b>').text(name(sw.to)));
+    const date = opts.timestamp != null ? normalizeTimestamp(opts.timestamp) : null;
+    if (date) {
+        let label = '';
+        try {
+            label = cfg.formatTimestamp ? cfg.formatTimestamp(date)
+                : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        } catch (e) {}
+        // Not <time>: '#chat-messages time' styles bubble timestamps as blocks
+        if (label) $label.append($('<span class="chat-wp-switch-time">').attr('title', date.toLocaleString()).text(' · ' + label));
+    }
+    return $('<div class="chat-wp-switch" role="note" data-msg-role="system">')
+        .append('<span class="chat-wp-switch-line"></span>', $label, '<span class="chat-wp-switch-line"></span>');
+}
+
 export function buildMessageBubble(role, content, opts = {}, cfg = {}) {
+    if (opts.metadata && opts.metadata.workplace_switch) {
+        return buildWorkplaceSwitchMarker(opts.metadata.workplace_switch, opts, cfg);
+    }
     const {
         userAlign = 'right',
         assistantAlign = 'left',
@@ -1240,7 +1252,9 @@ export function buildMessageBubble(role, content, opts = {}, cfg = {}) {
 
     } else if (isError) {
         const $icon = $('<svg class="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Zm-8-5a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-1.5 0v-4.5A.75.75 0 0 1 10 5Zm0 10a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" clip-rule="evenodd"/></svg>');
-        $bubble = $('<div class="bg-red-50 text-red-700 border border-red-200 rounded-lg px-4 py-2 text-sm flex items-start gap-2">').append($icon, $('<span>').text(content));
+        // min-width:0 + overflow-wrap:anywhere: a flex child cannot shrink below its longest unbroken token, so long
+        // error payloads (JSON without spaces) used to stretch the bubble and the whole message list sideways.
+        $bubble = $('<div class="bg-red-50 text-red-700 border border-red-200 rounded-lg px-4 py-2 text-sm flex items-start gap-2 min-w-0 max-w-full">').append($icon, $('<span style="min-width:0;overflow-wrap:anywhere">').text(content));
 
     } else if (isSystem) {
         const sysMatch = content.match(/^\[system[^\]]*\]\s*/i);

@@ -268,55 +268,6 @@ _TOOL_DEFS = [
     {
         "type": "function",
         "function": {
-            "name": "list_skillsets",
-            "description": "List all available skillset templates for creating pre-configured agents.",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": []
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "apply_skillset",
-            "description": "Create a new agent from a skillset template with pre-configured tools, skills, and prompt.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "skill_id": {
-                        "type": "string",
-                        "description": "The skillset template ID to apply (e.g., 'coder', 'devops')"
-                    },
-                    "agent_id": {
-                        "type": "string",
-                        "description": "Agent ID for the new agent (lowercase snake_case: alphanumeric and underscores only)"
-                    },
-                    "name": {
-                        "type": "string",
-                        "description": "Display name for the new agent (optional, uses skillset default)"
-                    },
-                    "description": {
-                        "type": "string",
-                        "description": "Description for the new agent (optional, uses skillset default)"
-                    },
-                    "model_id": {
-                        "type": "string",
-                        "description": "Optional model ID to assign (optional, uses skillset default)"
-                    },
-                    "workplace_id": {
-                        "type": "string",
-                        "description": "Optional workplace ID to assign the new agent to (e.g. 'a15117f03576'). Use list_workplaces to discover available workplaces."
-                    }
-                },
-                "required": ["skill_id", "agent_id"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "set_owner_name",
             "description": "Save the platform owner's name after learning it during onboarding. Call this once the owner tells you their name.",
             "parameters": {
@@ -593,95 +544,6 @@ def _exec_manage_skill(args: dict) -> dict:
     return {'error': f"Unknown action '{action}'. Use: list, enable, disable."}
 
 
-def _exec_list_skillsets(args: dict) -> dict:
-    from backend.skillsets import list_skillsets as ls
-    skillsets = ls()
-    return {'skillsets': skillsets, 'count': len(skillsets)}
-
-
-def _exec_apply_skillset(args: dict) -> dict:
-    import re as _re
-    from backend.skillsets import apply_skillset as apply_ss
-    from backend.skills_manager import skills_manager
-
-    skill_id = (args.get('skill_id') or '').strip()
-    agent_id = (args.get('agent_id') or '').strip().lower()
-    if not skill_id:
-        return {'error': 'skill_id is required.'}
-    if not agent_id or not _re.match(r'^[a-z0-9_]+$', agent_id):
-        return {'error': 'Invalid agent_id. Use only lowercase alphanumeric characters and underscores (snake_case).'}
-
-    if _re.search(r'_sub_\d+$', agent_id):
-        return {'error': 'Agent ID cannot end with a sub-agent pattern (e.g. _sub_1). This naming convention is reserved for internal use.'}
-
-    if db.get_agent(agent_id):
-        return {'error': f"Agent ID '{agent_id}' already exists."}
-
-    agent_data = {
-        'id': agent_id,
-        'name': args.get('name', ''),
-        'description': args.get('description', ''),
-        'model_id': args.get('model_id', ''),
-    }
-
-    result = apply_ss(skill_id, agent_data)
-    if 'error' in result:
-        return result
-
-    try:
-        agents_dir = AGENTS_DIR
-        agent_dir = os.path.join(agents_dir, agent_id)
-        kb_dir = os.path.join(agent_dir, 'kb')
-        os.makedirs(kb_dir, exist_ok=True)
-
-        system_prompt_path = os.path.join(agent_dir, 'SYSTEM.md')
-        with open(system_prompt_path, 'w', encoding='utf-8') as f:
-            f.write(result.get('system_prompt', ''))
-
-        # Create workspace directory at shared/agents/[agent-id]
-        workspace_dir = os.path.join(WORKSPACE_DIR, agent_id)
-        os.makedirs(workspace_dir, exist_ok=True)
-
-        create_data = {
-            'id': agent_id,
-            'name': result.get('name', ''),
-            'description': result.get('description', ''),
-            'system_prompt': result.get('system_prompt', ''),
-            'model_id': result.get('model'),
-            'workspace': workspace_dir,
-        }
-        workplace_id = args.get('workplace_id', '').strip()
-        if workplace_id:
-            create_data['workplace_id'] = workplace_id
-        db.create_agent(create_data)
-
-        tools = result.get('tools', [])
-        if tools:
-            db.set_agent_tools(agent_id, tools)
-
-        for skill_name in result.get('skills', []):
-            skills_manager.set_skill_enabled(skill_name, True)
-
-        for fname, content in result.get('kb_files', {}).items():
-            kb_file_path = os.path.join(kb_dir, fname)
-            with open(kb_file_path, 'w', encoding='utf-8') as f:
-                f.write(content)
-
-        # Create notes.md template if it does not already exist
-        _notes_md = os.path.join(kb_dir, 'notes.md')
-        if not os.path.isfile(_notes_md):
-            with open(_notes_md, 'w', encoding='utf-8') as _f:
-                _f.write(_NOTES_MD_TEMPLATE)
-
-        return {
-            'success': True,
-            'agent_id': agent_id,
-            'message': f"Agent '{result.get('name', agent_id)}' created from skillset '{skill_id}'."
-        }
-    except Exception as e:
-        return {'error': str(e)}
-
-
 def _exec_set_owner_name(args: dict) -> dict:
     name = (args.get('name') or '').strip()
     if not name:
@@ -920,8 +782,6 @@ _EXECUTORS: Dict[str, Callable] = {
     'assign_tools': _exec_assign_tools,
     'list_tools': _exec_list_tools,
     'manage_skill': _exec_manage_skill,
-    'list_skillsets': _exec_list_skillsets,
-    'apply_skillset': _exec_apply_skillset,
     'set_owner_name': _exec_set_owner_name,
     'restart': _exec_restart,
     'assign_skills': _exec_assign_skills,

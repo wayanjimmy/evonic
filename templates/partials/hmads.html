@@ -10,36 +10,39 @@
         </button>
     </div>
 
-    <!-- Scope Filter -->
-    <div class="flex items-center gap-2">
-        <label class="text-sm text-gray-500">Filter:</label>
-        <select id="hmads-scope-filter" onchange="hmads.load()"
-                class="border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-1.5 text-sm bg-white dark:bg-gray-700 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-300">
-            <option value="">All Rules</option>
-            <option value="global">Global Only</option>
-            <option value="specific">Specific Only</option>
-        </select>
-        <span id="hmads-count" class="text-xs text-gray-400 ml-2"></span>
-    </div>
+    <!-- Rules: toolbar + table -->
+    <div class="hm-card">
+        <div class="hm-toolbar">
+            <label class="hm-filter" for="hmads-scope-filter">
+                <i data-lucide="list-filter" aria-hidden="true"></i>
+                <span class="sr-only">Filter by scope</span>
+                <select id="hmads-scope-filter" class="sf-select" onchange="hmads.load()">
+                    <option value="">All rules</option>
+                    <option value="global">Global only</option>
+                    <option value="specific">Specific only</option>
+                </select>
+            </label>
+            <span id="hmads-count" class="hm-count" role="status" aria-live="polite"></span>
+        </div>
 
-    <!-- Rules Table -->
-    <div class="overflow-x-auto">
-        <table class="w-full text-sm text-left">
-            <thead class="text-xs text-gray-500 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-300">
-                <tr>
-                    <th class="px-4 py-2">Name</th>
-                    <th class="px-4 py-2">Pattern</th>
-                    <th class="px-4 py-2 text-center">Weight</th>
-                    <th class="px-4 py-2">Category</th>
-                    <th class="px-4 py-2">Scope</th>
-                    <th class="px-4 py-2 text-center">Enabled</th>
-                    <th class="px-4 py-2 text-right">Actions</th>
-                </tr>
-            </thead>
-            <tbody id="hmads-rules-body">
-                <tr><td colspan="7" class="text-center py-8 text-gray-400">Loading...</td></tr>
-            </tbody>
-        </table>
+        <div class="hm-table-wrap">
+            <table class="hm-table">
+                <thead>
+                    <tr>
+                        <th scope="col">Rule</th>
+                        <th scope="col">Pattern</th>
+                        <th scope="col">Weight</th>
+                        <th scope="col">Category</th>
+                        <th scope="col">Scope</th>
+                        <th scope="col">Enabled</th>
+                        <th scope="col" class="hm-col-actions"><span class="sr-only">Actions</span></th>
+                    </tr>
+                </thead>
+                <tbody id="hmads-rules-body">
+                    <tr><td colspan="7" class="hm-state">Loading rules…</td></tr>
+                </tbody>
+            </table>
+        </div>
     </div>
 </div>
 
@@ -139,66 +142,143 @@
 <script>
 window.hmads = {
     _initialized: false,
+    _rules: [],
 
     async init() {
         if (this._initialized) { this.load(); return; }
         this._initialized = true;
+        const tbody = document.getElementById('hmads-rules-body');
+        // Delegated row actions: ids/names never get interpolated into inline JS.
+        tbody.addEventListener('click', (e) => {
+            const btn = e.target.closest('button[data-action]');
+            if (!btn) return;
+            const id = btn.closest('tr').dataset.ruleId;
+            if (btn.dataset.action === 'edit') this.edit(id);
+            else if (btn.dataset.action === 'delete') this.remove(id);
+            else if (btn.dataset.action === 'add') this.openModal();
+        });
+        tbody.addEventListener('change', (e) => {
+            const input = e.target.closest('input[data-action="toggle"]');
+            if (input) this.toggleEnabled(input.closest('tr').dataset.ruleId, input);
+        });
         this.load();
     },
 
     async load() {
+        const tbody = document.getElementById('hmads-rules-body');
         try {
             const res = await fetch('/api/safety-rules');
+            if (!res.ok) throw new Error('HTTP ' + res.status);
             const data = await res.json();
             let rules = data.rules || [];
             const filter = document.getElementById('hmads-scope-filter').value;
             if (filter) rules = rules.filter(r => r.scope === filter);
+            this._rules = rules;
             this.render(rules);
-            document.getElementById('hmads-count').textContent = `${rules.length} rule${rules.length !== 1 ? 's' : ''}`;
         } catch(e) {
             console.error('Failed to load rules:', e);
-            document.getElementById('hmads-rules-body').innerHTML = '<tr><td colspan="7" class="text-center py-8 text-red-500">Failed to load rules.</td></tr>';
+            document.getElementById('hmads-count').textContent = '';
+            tbody.innerHTML = `<tr><td colspan="7" class="hm-state hm-state-err">
+                <i data-lucide="triangle-alert"></i><span>Failed to load rules.</span>
+                <button type="button" class="sf-btn" onclick="hmads.load()">Retry</button>
+            </td></tr>`;
+            this._icons();
         }
+    },
+
+    _icons() {
+        if (window.lucide) lucide.createIcons();
+    },
+
+    _updateCount() {
+        const total = this._rules.length;
+        const on = this._rules.filter(r => r.enabled).length;
+        document.getElementById('hmads-count').textContent = total
+            ? `${total} rule${total !== 1 ? 's' : ''} · ${on} enabled`
+            : '';
+    },
+
+    /* Weight bands match the scorer: 0-3 safe, 4-7 warn, 8-14 approval, 15+ block. */
+    _level(weight) {
+        if (weight >= 15) return { key: 'block', label: 'Block' };
+        if (weight >= 8) return { key: 'approval', label: 'Approval' };
+        if (weight >= 4) return { key: 'warn', label: 'Warn' };
+        return { key: 'safe', label: 'Safe' };
     },
 
     render(rules) {
         const tbody = document.getElementById('hmads-rules-body');
+        this._updateCount();
+        const filtered = !!document.getElementById('hmads-scope-filter').value;
         if (!rules.length) {
-            tbody.innerHTML = '<tr><td colspan="7" class="text-center py-8 text-gray-400">No custom rules yet. Click "Add Rule" to create one.</td></tr>';
+            tbody.innerHTML = `<tr><td colspan="7" class="hm-state hm-empty">
+                <i data-lucide="shield-plus"></i>
+                <strong>${filtered ? 'No rules match this filter' : 'No custom rules yet'}</strong>
+                <span>${filtered ? 'Try another scope, or add a rule for it.' : 'Add a regex rule to score commands HMADS should watch for.'}</span>
+                <button type="button" class="sf-btn" data-action="add"><i data-lucide="plus"></i>Add rule</button>
+            </td></tr>`;
+            this._icons();
             return;
         }
+        const toolLabel = { all: 'All tools', bash: 'Bash only', python: 'Python only' };
         tbody.innerHTML = rules.map(r => {
-            const isSystem = r.is_system;
-            const enabledBg = r.enabled ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300' : 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400';
-            const weightColor = r.weight >= 15 ? 'text-red-600 dark:text-red-400 font-bold' :
-                                r.weight >= 8 ? 'text-orange-600 dark:text-orange-400 font-semibold' :
-                                r.weight >= 4 ? 'text-yellow-600 dark:text-yellow-400' : 'text-gray-600 dark:text-gray-400';
-            const scopeBg = r.scope === 'global' ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-300' : 'bg-purple-100 dark:bg-purple-900/40 text-purple-600 dark:text-purple-300';
-            return `<tr class="border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-750">
-                <td class="px-4 py-2.5">
-                    <div class="font-medium text-gray-800 dark:text-gray-100">${esc(r.name)}</div>
-                    ${r.description ? `<div class="text-xs text-gray-400 mt-0.5">${esc(r.description)}</div>` : ''}
-                    ${isSystem ? '<span class="inline-block mt-0.5 text-[10px] bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-300 rounded px-1.5 py-0.5">SYSTEM</span>' : ''}
+            const isSystem = !!r.is_system;
+            const level = this._level(Number(r.weight) || 0);
+            const scope = r.scope === 'specific' ? 'specific' : 'global';
+            const actions = isSystem
+                ? '<span class="hm-readonly" title="Built-in rules are read-only"><i data-lucide="lock"></i>Read-only</span>'
+                : `<button type="button" class="hm-icon-btn" data-action="edit" title="Edit rule" aria-label="Edit ${esc(r.name)}"><i data-lucide="pencil"></i></button>
+                   <button type="button" class="hm-icon-btn hm-icon-btn-danger" data-action="delete" title="Delete rule" aria-label="Delete ${esc(r.name)}"><i data-lucide="trash-2"></i></button>`;
+            return `<tr data-rule-id="${esc(String(r.id))}" class="${r.enabled ? '' : 'is-off'}">
+                <td class="hm-rule">
+                    <div class="hm-rule-name">${esc(r.name)}${isSystem ? '<span class="hm-tag">System</span>' : ''}</div>
+                    ${r.description ? `<div class="hm-rule-desc">${esc(r.description)}</div>` : ''}
                 </td>
-                <td class="px-4 py-2.5 font-mono text-xs text-gray-600 dark:text-gray-400 max-w-[200px] truncate" title="${esc(r.pattern)}">${esc(r.pattern)}</td>
-                <td class="px-4 py-2.5 text-center ${weightColor}">${r.weight}</td>
-                <td class="px-4 py-2.5"><span class="text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded px-2 py-0.5">${esc(r.category)}</span></td>
-                <td class="px-4 py-2.5">
-                    <span class="text-xs rounded px-2 py-0.5 ${scopeBg}">${r.scope || 'global'}</span>
-                    <div class="text-[10px] text-gray-400 mt-0.5">${r.tool_scope === 'all' ? 'all tools' : r.tool_scope}</div>
+                <td><code class="hm-pattern" title="${esc(r.pattern)}">${esc(r.pattern)}</code></td>
+                <td>
+                    <span class="hm-weight hm-weight-${level.key}" title="Weight ${esc(String(r.weight))} of 20">
+                        <span class="hm-weight-num">${esc(String(r.weight))}</span>${level.label}
+                    </span>
                 </td>
-                <td class="px-4 py-2.5 text-center">
-                    <span class="inline-block text-xs rounded px-2 py-0.5 ${enabledBg}">${r.enabled ? 'ON' : 'OFF'}</span>
+                <td><span class="hm-chip">${esc(r.category)}</span></td>
+                <td>
+                    <span class="hm-scope hm-scope-${scope}">${scope === 'global' ? 'Global' : 'Specific'}</span>
+                    <div class="hm-sub">${toolLabel[r.tool_scope] || esc(r.tool_scope || 'All tools')}</div>
                 </td>
-                <td class="px-4 py-2.5 text-right">
-                    ${isSystem ? '<span class="text-xs text-gray-400">read-only</span>' : `
-                        <button onclick="hmads.edit('${r.id}')" class="btn-icon" title="Edit">&#9998;</button>
-                        <button onclick="hmads.toggleEnabled('${r.id}', ${r.enabled ? 0 : 1})" class="btn-icon" title="${r.enabled ? 'Disable' : 'Enable'}">${r.enabled ? '&#9724;' : '&#9654;'}</button>
-                        <button onclick="hmads.remove('${r.id}', '${esc(r.name)}')" class="btn-icon delete" title="Delete">&#128465;</button>
-                    `}
+                <td>
+                    <div class="hm-toggle-cell">
+                        <label class="relative inline-flex items-center ${isSystem ? 'cursor-not-allowed' : 'cursor-pointer'}" title="${isSystem ? 'Built-in rules are read-only' : (r.enabled ? 'Disable rule' : 'Enable rule')}">
+                            <input type="checkbox" class="sr-only peer" data-action="toggle" aria-label="Enable ${esc(r.name)}"
+                                   ${r.enabled ? 'checked' : ''} ${isSystem ? 'disabled' : ''}>
+                            <span class="dyn-toggle"></span>
+                        </label>
+                        <span class="save-status" aria-live="polite"></span>
+                    </div>
                 </td>
+                <td class="hm-col-actions"><div class="hm-actions">${actions}</div></td>
             </tr>`;
         }).join('');
+        this._icons();
+    },
+
+    /* Same spinner / check / error feedback as the settings AutoSave. */
+    _status(row, state) {
+        const slot = row && row.querySelector('.save-status');
+        if (!slot) return;
+        clearTimeout(slot._fadeTimer);
+        slot.classList.remove('is-saving', 'is-saved', 'is-error');
+        slot.innerHTML = '';
+        if (state === 'saving') {
+            slot.classList.add('is-saving');
+            slot.innerHTML = '<span class="spinner"></span>';
+        } else if (state === 'saved') {
+            slot.classList.add('is-saved');
+            slot.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path class="st-check-path" d="M4 12.5l5 5L20 6.5"/></svg>';
+            slot._fadeTimer = setTimeout(() => { slot.classList.remove('is-saved'); slot.innerHTML = ''; }, 1800);
+        } else if (state === 'error') {
+            slot.classList.add('is-error');
+            slot.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>';
+        }
     },
 
     openModal(ruleId) {
@@ -283,23 +363,57 @@ window.hmads = {
         }
     },
 
-    async toggleEnabled(ruleId, enabled) {
+    /* Saves in place (no table re-render) so the row's spinner -> check stays visible. */
+    async toggleEnabled(ruleId, input) {
+        const row = input.closest('tr');
+        const enabled = input.checked;
+        input.disabled = true;
+        this._status(row, 'saving');
         try {
-            await fetch(`/api/safety-rules/${ruleId}`, {
+            const res = await fetch(`/api/safety-rules/${encodeURIComponent(ruleId)}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ enabled }),
+                body: JSON.stringify({ enabled: enabled ? 1 : 0 }),
             });
-            this.load();
-        } catch(e) { console.error('Toggle failed:', e); }
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                throw new Error(data.error || 'HTTP ' + res.status);
+            }
+            const rule = this._rules.find(r => String(r.id) === String(ruleId));
+            if (rule) rule.enabled = enabled;
+            row.classList.toggle('is-off', !enabled);
+            input.closest('label').title = enabled ? 'Disable rule' : 'Enable rule';
+            this._updateCount();
+            this._status(row, 'saved');
+        } catch(e) {
+            console.error('Toggle failed:', e);
+            input.checked = !enabled;
+            this._status(row, 'error');
+            if (window.toast) toast.error('Failed to update rule');
+            else if (window.evToast) evToast('Failed to update rule', 'error');
+        } finally {
+            input.disabled = false;
+        }
     },
 
-    async remove(ruleId, name) {
-        if (!confirm(`Delete rule "${name}"?`)) return;
+    async remove(ruleId) {
+        const rule = this._rules.find(r => String(r.id) === String(ruleId));
+        const ok = await showConfirm({
+            title: 'Delete Rule',
+            message: `Delete "${rule ? rule.name : ruleId}"? HMADS stops scoring commands against it. This cannot be undone.`,
+            confirmText: 'Delete',
+            danger: true,
+        });
+        if (!ok) return;
         try {
-            await fetch(`/api/safety-rules/${ruleId}`, { method: 'DELETE' });
+            const res = await fetch(`/api/safety-rules/${encodeURIComponent(ruleId)}`, { method: 'DELETE' });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
             this.load();
-        } catch(e) { console.error('Delete failed:', e); }
+        } catch(e) {
+            console.error('Delete failed:', e);
+            if (window.toast) toast.error('Failed to delete rule');
+            else if (window.evToast) evToast('Failed to delete rule', 'error');
+        }
     },
 
     async testPattern() {

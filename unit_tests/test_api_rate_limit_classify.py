@@ -95,6 +95,32 @@ class TestClassifyRequest(unittest.TestCase):
         # POST kb is still an upload (unchanged behavior)
         self.assertEqual(classify_request(f"{self.AID}/kb", "POST"), "upload")
 
+    # -- Artifact-share downloads (task #806) ---------------------------
+
+    def test_artifact_share_download_is_download_tier(self):
+        # Tokenized artifact downloads get their own bounded tier so a burst of
+        # shares cannot exhaust the general budget or go entirely unmetered.
+        self.assertEqual(
+            classify_request("/plugin/artifact-share/dl/sometoken", "GET"),
+            "download",
+        )
+        self.assertEqual(
+            classify_request("/plugin/artifact-share/", "GET"),
+            "download",
+        )
+        self.assertEqual(
+            classify_request("/plugin/artifact-share/status", "HEAD"),
+            "download",
+        )
+
+    def test_download_tier_is_bounded(self):
+        # The tier must exist and impose a finite per-minute bound.
+        from models.api_rate_limit import TIERS
+        self.assertIn("download", TIERS)
+        limit, window = TIERS["download"]
+        self.assertGreater(limit, 0)
+        self.assertEqual(window, 60)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -51,7 +51,8 @@ def test_frontend_executes_only_no_arg_suggestions_and_renders_parameter_hint():
     source = (ROOT / "templates/agent_detail.html").read_text(encoding="utf-8")
 
     assert "if (executeNoArgs && !command.accepts_args) sendChat();" in source
-    assert "selectChatCommand(choices[chatCommandIndex < 0 ? 0 : chatCommandIndex], true);" in source
-    assert "renderChatCommandHint(commandInputContext(value));" in source
+    assert "const command = choices[chatCommandIndex < 0 ? 0 : chatCommandIndex];" in source
+    assert "else selectChatCommand(command);" in source
+    assert "renderChatCommandHint(bashMode ? null : commandInputContext(value));" in source
     assert "parameter.options.join(' | ')" in source
     assert "parameter.required ? `<${parameter.placeholder || parameter.name}>`" in source

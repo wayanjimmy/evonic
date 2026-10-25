@@ -1,0 +1,216 @@
+/*
+ * Ask User Question plugin — web UI styles (loaded by routes.inject_assets on agent pages).
+ * The pending card docks in the slash-command menu's slot: a panel fused to the chat
+ * composer's top edge, with the menu's row, tint and fillet language and the composer's
+ * button styles. Light by default; dark keys off html.dark like the rest of Evonic.
+ */
+
+/* ── Dock: panel fused to the composer's top edge (mirrors #chat-command-menu) ── */
+.ask-dock {
+    --ask-fill: #ffffff; --ask-line: #818cf8; --ask-r: .625rem;
+    --ask-hair: rgb(148 163 184 / .2); --ask-muted: #6b7280; --ask-accent: #4f46e5;
+    --ask-hover: rgb(99 102 241 / .06); --ask-tint: rgb(99 102 241 / .1);
+    position: relative; margin: 0 2.5rem; transform-origin: 50% 100%;
+    border: 1px solid var(--ask-line); border-bottom: 0; border-radius: 1rem 1rem 0 0;
+    background: var(--ask-fill); color: #1f2937;
+    animation: ask-in .24s cubic-bezier(.2, .8, .2, 1) both;
+}
+html.dark .ask-dock {
+    --ask-fill: #151c2b; --ask-line: #6366f1; --ask-muted: #9ca3af; --ask-accent: #a5b4fc;
+    --ask-hover: rgb(99 102 241 / .1); --ask-tint: rgb(99 102 241 / .18);
+    color: #e5e7eb;
+}
+.ask-dock[hidden] { display: none !important; }
+.ask-dock::before, .ask-dock::after {
+    content: ""; position: absolute; bottom: 0; pointer-events: none;
+    width: calc(var(--ask-r) + 1px); height: calc(var(--ask-r) + 1px);
+}
+.ask-dock::before {
+    right: 100%;
+    background: radial-gradient(circle at 0 0, transparent var(--ask-r), var(--ask-line) var(--ask-r),
+        var(--ask-line) calc(var(--ask-r) + 1px), var(--ask-fill) calc(var(--ask-r) + 1px));
+}
+.ask-dock::after {
+    left: 100%;
+    background: radial-gradient(circle at 100% 0, transparent var(--ask-r), var(--ask-line) var(--ask-r),
+        var(--ask-line) calc(var(--ask-r) + 1px), var(--ask-fill) calc(var(--ask-r) + 1px));
+}
+/* Scrolls internally so a long card never pushes the composer off screen; the footer stays in view. */
+.ask-dock-list {
+    max-height: min(55vh, 30rem); overflow-y: auto; overscroll-behavior: contain; padding: 0 .375rem;
+    border-radius: calc(1rem - 1px) calc(1rem - 1px) 0 0;
+    scrollbar-width: thin; scrollbar-color: rgb(148 163 184 / .35) transparent;
+}
+@keyframes ask-in { from { opacity: 0; transform: translateY(10px) scale(.97); } to { opacity: 1; transform: none; } }
+@media (max-width: 767.98px) { .ask-dock { margin: 0 1.25rem; --ask-r: .5rem; } }
+@media (prefers-reduced-motion: reduce) { .ask-dock { animation: none; } }
+
+/* While a card is docked the composer is locked (ask_user.js lockComposer): outline it in the
+   dock's line colour, as the focused composer is under the slash menu, and keep that menu away. */
+#chat-composer-wrap:has(> #ask-user-dock:not([hidden])) .chat-composer { border-color: #818cf8; }
+html.dark #chat-composer-wrap:has(> #ask-user-dock:not([hidden])) .chat-composer { border-color: #6366f1; }
+#chat-composer-wrap:has(> #ask-user-dock:not([hidden])) :is(#chat-command-hint, #chat-command-menu) { display: none !important; }
+#chat-send-btn:disabled, #chat-attach-btn:disabled { opacity: .45; cursor: not-allowed; }
+/* Let the message list shrink (it has an inline 300px floor) so short viewports keep the dock in view. */
+#chat-panel:has(#ask-user-dock:not([hidden])) #chat-messages { min-height: 6rem !important; }
+
+/* ── Card: text sits on the option rows' content edge (row padding .625rem) ── */
+.ask-card { padding-top: .75rem; font-size: .875rem; line-height: 1.45; }
+.ask-card + .ask-card { border-top: 1px solid var(--ask-hair); }
+.ask-card [hidden] { display: none !important; }
+.ask-card-title, .ask-question-text, .ask-hint, .ask-steps { padding-inline: .625rem; }
+.ask-card-title {
+    display: flex; align-items: center; gap: .5rem;
+    font-size: .75rem; font-weight: 600; color: var(--ask-accent);
+}
+.ask-card-icon { display: inline-flex; flex: none; }
+.ask-card-icon svg { width: 1rem; height: 1rem; }
+.ask-question { border: 0; margin: .625rem 0 0; padding: 0; min-width: 0; }
+.ask-question-text {
+    display: flex; align-items: baseline; gap: .5rem;
+    margin-bottom: .125rem; font-weight: 600; line-height: 1.4;
+}
+.ask-chip {
+    flex: none; padding: .0625rem .5rem; border-radius: 999px;
+    background: var(--ask-tint); color: #4f46e5; font-size: .6875rem; font-weight: 600;
+}
+html.dark .ask-chip { color: #a5b4fc; }
+.ask-hint { margin: 0 0 .25rem; font-size: .75rem; color: var(--ask-muted); }
+
+/* Options: the slash menu's rows — borderless, pill-rounded, tinted on hover and when chosen. */
+.ask-option {
+    display: flex; align-items: flex-start; gap: .75rem;
+    margin-top: .125rem; padding: .5rem .625rem; border-radius: 1.125rem; cursor: pointer;
+    transition: background-color .12s;
+}
+.ask-option:hover { background: var(--ask-hover); }
+.ask-option:has(input:checked) { background: var(--ask-tint); }
+.ask-option:has(input:focus-visible) { outline: 2px solid #818cf8; outline-offset: -2px; }
+.ask-option input[type="radio"], .ask-option input[type="checkbox"] {
+    -webkit-appearance: none; appearance: none; flex-shrink: 0;
+    display: grid; place-content: center;
+    width: 1.125rem; height: 1.125rem; margin: .125rem 0 0;
+    border: 1.5px solid #cbd5e1; background: transparent; cursor: pointer;
+    transition: border-color .15s, background-color .15s, box-shadow .15s;
+}
+html.dark .ask-option input[type="radio"]:not(:checked),
+html.dark .ask-option input[type="checkbox"]:not(:checked) { background: transparent; border-color: #4b5563; }
+.ask-option input[type="radio"] { border-radius: 999px; }
+.ask-option input[type="checkbox"] { border-radius: .3125rem; }
+.ask-option input[type="radio"]::before,
+.ask-option input[type="checkbox"]::before {
+    content: ''; background: #ffffff; transform: scale(0);
+    transition: transform .16s cubic-bezier(.2, .8, .2, 1);
+}
+.ask-option input[type="radio"]::before { width: .4375rem; height: .4375rem; border-radius: 999px; }
+.ask-option input[type="checkbox"]::before {
+    width: .6875rem; height: .6875rem;
+    clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
+}
+.ask-option:hover input:not(:checked):not(:disabled) { border-color: #818cf8; }
+.ask-option input:checked { border-color: #4f46e5; background: #4f46e5; box-shadow: 0 0 0 3px rgb(99 102 241 / .2); }
+html.dark .ask-option input:checked { border-color: #6366f1; background: #6366f1; }
+.ask-option input:checked::before { transform: scale(1); }
+.ask-option input:disabled { cursor: not-allowed; opacity: .6; }
+.ask-option-text { display: flex; flex-direction: column; min-width: 0; }
+.ask-option-label { display: flex; flex-wrap: wrap; align-items: center; gap: .375rem; font-weight: 500; }
+.ask-option-desc { font-size: .8125rem; color: var(--ask-muted); line-height: 1.4; }
+.ask-badge {
+    padding: 0 .4375rem; border: 1px solid #a7f3d0; border-radius: 999px;
+    background: #ecfdf5; color: #047857;
+    font-size: .625rem; font-weight: 700; line-height: 1.125rem; letter-spacing: .03em; text-transform: uppercase;
+}
+html.dark .ask-badge { background: rgb(16 185 129 / .15); border-color: rgb(16 185 129 / .35); color: #6ee7b7; }
+.ask-option-other { align-items: center; padding-block: .375rem; }
+/* "Other": a real field, not a bare line of text. The page's global input styles are
+   scoped to #agent-tab-area (light) and html.dark (dark), so these rules need !important. */
+.ask-card input.ask-other-text:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]) {
+    flex: 1; min-width: 0; height: 2.25rem; padding: 0 .875rem !important;
+    border: 1px solid rgb(148 163 184 / .5) !important; border-radius: .75rem !important;
+    background-color: transparent !important; box-shadow: none !important; outline: none;
+    color: inherit; font-size: .875rem; caret-color: #6366f1;
+    transition: border-color .15s, box-shadow .15s, background-color .15s;
+}
+.ask-other-text::placeholder { color: var(--ask-muted); opacity: 1; }
+.ask-card input.ask-other-text:not([type="checkbox"]):not([type="radio"]):hover { border-color: #a5b4fc !important; }
+.ask-card input.ask-other-text:not([type="checkbox"]):not([type="radio"]):focus,
+.ask-option-other:has(.ask-other-toggle:checked) input.ask-other-text:not([type="checkbox"]):not([type="radio"]) {
+    border-color: #6366f1 !important; background-color: var(--ask-fill) !important;
+}
+.ask-card input.ask-other-text:not([type="checkbox"]):not([type="radio"]):focus { box-shadow: 0 0 0 3px rgb(99 102 241 / .2) !important; }
+html.dark .ask-card input.ask-other-text:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]) {
+    border-color: rgb(148 163 184 / .35) !important; background-color: transparent !important;
+}
+html.dark .ask-card input.ask-other-text:not([type="checkbox"]):not([type="radio"]):hover { border-color: #6366f1 !important; }
+html.dark .ask-card input.ask-other-text:not([type="checkbox"]):not([type="radio"]):focus,
+html.dark .ask-option-other:has(.ask-other-toggle:checked) input.ask-other-text:not([type="checkbox"]):not([type="radio"]) {
+    border-color: #818cf8 !important; background-color: var(--ask-fill) !important;
+}
+
+/* ── Footer: sticky inside the scroller; buttons are the composer's icon button and send pill ── */
+.ask-footer {
+    position: sticky; bottom: 0; z-index: 1;
+    display: flex; align-items: center; justify-content: flex-end; gap: .5rem;
+    margin-top: .5rem; padding: .625rem 0 .5rem;
+    background: var(--ask-fill); border-top: 1px solid var(--ask-hair);
+}
+/* JS appends status, Cancel, Submit and the wizard prepends Back/Next; order them as
+   status on the left, then Cancel, Back and the primary action on the right. */
+.ask-status { order: -1; margin-right: auto; padding-left: .625rem; font-size: .75rem; color: var(--ask-muted); }
+.ask-status-error { color: #dc2626; }
+html.dark .ask-status-error { color: #f87171; }
+.ask-cancel { order: 1; }
+.ask-back { order: 2; }
+.ask-next, .ask-submit { order: 3; }
+.ask-nav, .ask-submit {
+    display: inline-flex; align-items: center; justify-content: center; gap: .5rem;
+    height: 2.25rem; padding: 0 .875rem; border-radius: .625rem;
+    font-size: .8125rem; font-weight: 600; cursor: pointer;
+    transition: color .15s, border-color .15s, background-color .15s, box-shadow .15s, transform .12s, opacity .15s;
+}
+.ask-nav { border: 1px solid #e5e7eb; background: transparent; color: #6b7280; }
+html.dark .ask-nav { border-color: #374151; color: #9ca3af; }
+.ask-nav:hover:not(:disabled) { color: #4f46e5; border-color: #a5b4fc; background: #eef2ff; }
+html.dark .ask-nav:hover:not(:disabled) { color: #c7d2fe; border-color: #6366f1; background: rgb(99 102 241 / .14); }
+.ask-submit, .ask-nav.ask-next {
+    min-width: 4rem; padding: 0 1rem; border: 0; background: #4f46e5; color: #fff;
+    box-shadow: 0 4px 12px -4px rgb(79 70 229 / .6);
+}
+.ask-submit:hover:not(:disabled), .ask-nav.ask-next:hover:not(:disabled) {
+    color: #fff; background: #4338ca; box-shadow: 0 6px 16px -4px rgb(79 70 229 / .7);
+}
+html.dark .ask-submit, html.dark .ask-nav.ask-next { background: #6366f1; }
+html.dark .ask-submit:hover:not(:disabled), html.dark .ask-nav.ask-next:hover:not(:disabled) { background: #818cf8; }
+.ask-nav:active:not(:disabled) { transform: scale(.94); }
+.ask-submit:active:not(:disabled), .ask-nav.ask-next:active:not(:disabled) { transform: scale(.95); }
+.ask-nav:disabled, .ask-submit:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
+.ask-submit:focus-visible, .ask-nav:focus-visible, .ask-step:focus-visible { outline: 2px solid #818cf8; outline-offset: 2px; }
+.ask-kbd {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 1.25rem; height: 1.125rem; border-radius: .25rem;
+    border: 1px solid rgb(255 255 255 / .35); border-bottom-width: 2px;
+    background: rgb(255 255 255 / .16); font: inherit;
+}
+.ask-kbd svg { width: .75rem; height: .75rem; }
+
+/* ── Wizard (more than one question): one question per step, chips like the menu's arg pills ── */
+.ask-step-count { margin-left: auto; font-size: .6875rem; font-weight: 500; color: var(--ask-muted); }
+.ask-steps { display: flex; flex-wrap: wrap; gap: .375rem; margin-top: .625rem; }
+.ask-step {
+    display: inline-flex; align-items: center; gap: .25rem;
+    padding: .125rem .625rem; border: 1px solid rgb(148 163 184 / .35); border-radius: 999px;
+    background: transparent; color: var(--ask-muted); font-size: .6875rem; font-weight: 600; cursor: pointer;
+    transition: border-color .12s, background-color .12s, color .12s;
+}
+.ask-step:hover { border-color: #a5b4fc; color: #4f46e5; }
+html.dark .ask-step:hover { border-color: #6366f1; color: #c7d2fe; }
+.ask-step.is-current { border-color: transparent; background: var(--ask-tint); color: #4f46e5; }
+html.dark .ask-step.is-current { color: #c7d2fe; }
+/* Answered step: lucide "check" (stroke 3) as a mask, so it stays a drawn icon, not a glyph. */
+.ask-step.is-done::before {
+    content: ''; flex: none; width: .75rem; height: .75rem; background: #16a34a;
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E") center / contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+html.dark .ask-step.is-done::before { background: #4ade80; }
+.ask-wizard .ask-question-text .ask-chip { display: none; }

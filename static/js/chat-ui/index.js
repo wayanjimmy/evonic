@@ -81,7 +81,8 @@ export class ChatUI {
      * @returns {jQuery}  the wrapper div (anchor for Turn)
      */
     appendMessage(role, content, opts = {}) {
-        const hasMeta = opts.metadata && (opts.metadata.image_url || opts.metadata.attachment_info);
+        // workplace_switch has no text of its own: the divider is drawn from the metadata
+        const hasMeta = opts.metadata && (opts.metadata.image_url || opts.metadata.attachment_info || opts.metadata.workplace_switch);
         if (role !== 'error' && (!content || !content.trim()) && !hasMeta) {
             this._log.warn('appendMessage SKIPPED empty/whitespace content', role);
             return $();
@@ -244,7 +245,14 @@ export class ChatUI {
                 _ensureTurn();
                 let result;
                 try { result = JSON.parse(entry.content); } catch(e) { result = { data: entry.content }; }
-                thinkingTurn.ingest({ event: 'tool_executed', data: { tool: entry.function, result, error: !!entry.error }, seq: 0 });
+                thinkingTurn.ingest({ event: 'tool_executed', data: { tool: entry.function, result, error: !!entry.error,
+                                                                       safety: entry.safety || null,
+                                                                       approval: entry.approval || null }, seq: 0 });
+                // switch_workplace: end the bubble here and draw the divider, later steps start a new one.
+                if (entry.function === 'switch_workplace' && !entry.error && result && result.workplace_switch) {
+                    if (thinkingTurn) { thinkingTurn.ingest({ event: 'done', data: {}, seq: 0 }); thinkingTurn = null; }
+                    this.appendMessage('system', '', { metadata: { workplace_switch: result.workplace_switch }, timestamp: entry.ts || null });
+                }
                 continue;
             }
             if (entry.type === 'intermediate') {
@@ -275,6 +283,10 @@ export class ChatUI {
             }
             if (entry.type === 'system') {
                 const sysMeta = (entry.metadata && (entry.metadata.slash_command || entry.metadata.bash_exec)) ? { metadata: { slash_command: entry.metadata.slash_command || false, bash_exec: entry.metadata.bash_exec || false } } : {};
+                if (entry.metadata && entry.metadata.workplace_switch) {
+                    sysMeta.metadata = { workplace_switch: entry.metadata.workplace_switch };
+                    sysMeta.timestamp = entry.ts || null;
+                }
                 this.appendMessage('system', entry.content || '', sysMeta);
                 continue;
             }
@@ -483,6 +495,7 @@ export class ChatUI {
                     const $lastUser = this.$container.find('[data-msg-role="user"]').last();
                     const $anchor = $lastUser.length ? $lastUser : (opts.userMsgEl ? $(opts.userMsgEl) : turn.$anchor);
                     const newTurn = this.beginTurn($anchor);
+                    if (data.timestamp) newTurn._startTime = data.timestamp;
                     this._lastLiveTurnId = newTurn.id;
                     this.markQueuedAsDelivered();
                     // Re-route the SSE adapter to the new turn so subsequent events

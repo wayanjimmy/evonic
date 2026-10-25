@@ -41,6 +41,6 @@ def test_session_state_frontend_renders_statuses_from_api_payload():
     """The Session State renderer must not manufacture or hide active statuses."""
     source = (ROOT / "templates/sessions.html").read_text(encoding="utf-8")
 
-    assert "for (const t of stateData.tasks)" in source
+    assert "const tasks = stateData.tasks;" in source
     assert "const active = t.status === 'in_progress';" in source
-    assert "const icon = active ? spinnerSvg : (icons[t.status] || '\\u2610');" in source
+    assert "const icon = kind === 'done' ? ST_ICON.check : (active ? ST_ICON.spin : ST_ICON.circle);" in source

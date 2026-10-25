@@ -91,33 +91,27 @@ window.settingsTools = {
 
         if (this.tools.length === 0) {
             container.innerHTML =
-                '<div class="text-center py-10 text-gray-500">No tools found.</div>';
+                '<div class="st-empty">No tools found.</div>';
             return;
         }
         if (filtered.length === 0) {
-            container.innerHTML = `<div class="text-center py-10 text-gray-500">No tools match "<strong>${this.query}</strong>".</div>`;
+            container.innerHTML = `<div class="st-empty">No tools match "<strong>${this.query}</strong>".</div>`;
             return;
         }
 
         container.innerHTML = pageItems
             .map(
                 (tool) => `
-        <div class="bg-white dark:bg-gray-800 dark:text-white rounded-lg p-5 mb-3 shadow-sm border border-gray-200 dark:border-gray-700 flex justify-between items-center cursor-pointer hover:border-indigo-300 hover:shadow-md transition-all"
-             onclick="settingsTools.openEditor('${tool.id}')">
-            <div class="flex-1 pointer-events-none">
-                <h4 class="m-0 text-gray-800 text-base dark:text-gray-100">
-                    ${tool.name}
-                    <span class="inline-block px-2 py-0.5 rounded text-xs ml-2 ${tool.mock_response_type === "javascript" ? "bg-amber-100 text-amber-700" : "bg-blue-100 text-blue-700"}">
-                        ${tool.mock_response_type === "javascript" ? "JS" : "JSON"}
-                    </span>
-                    ${tool.no_mock ? '<span class="inline-block px-2 py-0.5 rounded text-xs ml-1 bg-green-100 text-green-700">real backend</span>' : ""}
-                </h4>
-                <p class="mt-1 mb-0 text-gray-500 text-sm dark:text-gray-400">${tool.description || "No description"}</p>
-                <code class="text-xs text-gray-400 mt-1 block">${tool.function ? tool.function.name : tool.id}</code>
+        <div class="st-card" tabindex="0" role="button" onclick="settingsTools.openEditor('${tool.id}')"
+             onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();settingsTools.openEditor('${tool.id}')}">
+            <div class="st-card-head">
+                <h4 class="st-card-name">${tool.name}</h4>
+                <span class="st-chip ${tool.mock_response_type === "javascript" ? "is-js" : "is-json"}">${tool.mock_response_type === "javascript" ? "JS" : "JSON"}</span>
+                ${tool.no_mock ? '<span class="st-chip is-real">real backend</span>' : ""}
+                <button class="st-card-del" title="Delete tool" aria-label="Delete tool" onclick="event.stopPropagation(); settingsTools.remove('${tool.id}')"><i data-lucide="trash-2"></i></button>
             </div>
-            <div class="flex gap-2">
-                <button class="btn-icon delete" title="Delete tool" onclick="event.stopPropagation(); settingsTools.remove('${tool.id}')"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
-            </div>
+            <p class="st-card-desc">${tool.description || "No description"}</p>
+            <code class="st-card-code">${tool.function ? tool.function.name : tool.id}</code>
         </div>
     `,
             )

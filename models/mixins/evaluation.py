@@ -249,6 +249,33 @@ class EvaluationMixin:
             conn.commit()
             return cursor.rowcount > 0
 
+    def update_run_model_name(self, run_id: int, model_name: str) -> bool:
+        """Update the model name of an evaluation run.
+
+        The run's stored results (domain-level ``test_results`` and
+        ``individual_test_results``) keep their own ``model_name`` snapshot, so
+        the new label is cascaded to them as well.  This keeps the history
+        detail view (header + per-cell test modals) consistent after a rename.
+        """
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE evaluation_runs SET model_name = ? WHERE run_id = ?",
+                (model_name, run_id)
+            )
+            updated = cursor.rowcount > 0
+            if updated:
+                cursor.execute(
+                    "UPDATE test_results SET model_name = ? WHERE run_id = ?",
+                    (model_name, run_id)
+                )
+                cursor.execute(
+                    "UPDATE individual_test_results SET model_name = ? WHERE run_id = ?",
+                    (model_name, run_id)
+                )
+            conn.commit()
+            return updated
+
     def get_runs_count(self) -> int:
         """Get total count of evaluation runs"""
         with self._connect() as conn:

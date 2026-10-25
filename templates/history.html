@@ -2,8 +2,9 @@
 
 {% block content %}
 <div class="dashboard">
+    {% include "partials/evaluate_subnav.html" %}
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-        <h2 style="margin: 0;">Evaluation History</h2>
+        <h2 style="margin: 0;"><span class="ev-h-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg></span>Evaluation History</h2>
         {% if runs and session.get('authenticated') %}
         <div style="display: flex; gap: 0.5rem;">
             <button onclick="clearIncompleteHistory()" class="btn" style="background: #d97706; color: white; font-size: 0.85rem; padding: 0.5rem 1rem;{% if not incomplete_count %} opacity: 0.5; cursor: not-allowed;{% endif %}"{% if not incomplete_count %} disabled{% endif %}>Clear Incomplete{% if incomplete_count %} ({{ incomplete_count }}){% endif %}</button>
@@ -438,4 +439,5 @@ async function deleteRun(runId) {
         .catch(err => alert('Error: ' + err));
 }
 </script>
+{% include "partials/evaluate_ui.html" %}
 {% endblock %}

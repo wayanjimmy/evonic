@@ -7,6 +7,10 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 )
 
+// Fyne's desktop loop polls GLFW at 60 Hz even while static. This pinned
+// upstream copy sleeps in the native event loop until input/UI work arrives.
+replace fyne.io/fyne/v2 => ./third_party/fyne
+
 require (
 	fyne.io/fyne/v2 v2.7.3
 	fyne.io/systray v1.12.0 // indirect

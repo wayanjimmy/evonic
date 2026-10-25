@@ -1,4 +1,3 @@
-import fcntl
 import os
 import secrets
 import sys
@@ -35,30 +34,30 @@ _log = logging.getLogger(__name__)
 # and the live server already holds the flock.
 # ---------------------------------------------------------------------------
 if not os.environ.get('EVONIC_TESTING') and not os.environ.get('EVONIC_SMOKE_TEST'):
+    # Cross-platform advisory locking: fcntl.flock on POSIX, msvcrt.locking on
+    # Windows. Imported lazily so `import app` never requires fcntl (absent on
+    # Windows) before the guard runs.
+    from backend.file_lock import AlreadyLockedError, open_and_lock
+
     _APP_ROOT = os.path.dirname(os.path.abspath(__file__))
     _PID_FILE = os.path.join(_APP_ROOT, "shared", "run", "evonic.pid")
     _PID_DIR = os.path.dirname(_PID_FILE)
 
     os.makedirs(_PID_DIR, exist_ok=True)
     # If our launcher (the evonic CLI in foreground mode) already holds the
-    # single-instance flock on this PID file, skip re-acquiring it: this code
-    # runs in the SAME process as the CLI, so a second flock on a different fd
-    # would self-conflict and abort startup. The launcher's lock already guards us.
+    # single-instance lock on this PID file, skip re-acquiring it: this code
+    # runs in the SAME process as the CLI, so a second lock on the same file
+    # would self-conflict and abort startup. The launcher's lock already guards
+    # us, and the launcher writes our PID, so we must not reopen the file for a
+    # truncating write either (that would break the lock on Windows).
     if os.environ.get("EVONIC_PID_LOCK_HELD") == "1":
         _lock_fd = None
     else:
         try:
-            _lock_fd = os.open(_PID_FILE, os.O_CREAT | os.O_RDWR)
-        except OSError as e:
-            _log.critical("Could not open PID file %s: %s", _PID_FILE, e)
-            sys.exit(1)
-
-        try:
-            fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except IOError:
+            _lock_fd = open_and_lock(_PID_FILE)
+        except AlreadyLockedError:
             # Another instance holds the lock — another app.py or CLI foreground
             # process is already running. Read the current PID for a friendly message.
-            os.close(_lock_fd)
             try:
                 with open(_PID_FILE) as _f:
                     _existing_pid = _f.read().strip()
@@ -71,12 +70,17 @@ if not os.environ.get('EVONIC_TESTING') and not os.environ.get('EVONIC_SMOKE_TES
             print(f"\nError: {msg}")
             print("Use 'evonic stop' to stop the running server, then try again.")
             sys.exit(1)
+        except OSError as e:
+            _log.critical("Could not open PID file %s: %s", _PID_FILE, e)
+            sys.exit(1)
 
-    # Write our PID so ``evonic status`` / ``evonic stop`` can find us.
-    # The flock fd stays open for the process lifetime — the OS releases the
-    # lock automatically when this process exits.
-    with open(_PID_FILE, "w") as _f:
-        _f.write(str(os.getpid()))
+        # Write our PID through the locked descriptor (instead of reopening the
+        # file with mode "w") so the write cannot conflict with the byte-range
+        # lock we hold on Windows. The fd stays open for the process lifetime
+        # — the OS releases the lock automatically when this process exits.
+        os.lseek(_lock_fd, 0, os.SEEK_SET)
+        os.ftruncate(_lock_fd, 0)
+        os.write(_lock_fd, str(os.getpid()).encode())
 # ---------------------------------------------------------------------------
 
 from models.db import db
@@ -91,16 +95,21 @@ from routes.skills import skills_bp
 from routes.plugins import plugins_bp
 from routes.scheduler import scheduler_bp
 from routes.models import models_bp
+from routes.decision_profiles import decision_profiles_bp
+from routes.decision_playground import decision_playground_bp
 from routes.providers import providers_bp
 from routes.codex import codex_bp
+from routes.claude import claude_bp
 from routes.health import health_bp
 from routes.workplaces import workplaces_bp
 from routes.logs import logs_bp
 from routes.safety_rules import safety_rules_bp
+from routes.decim_safety import decim_safety_bp
 from routes.update import update_bp
 from routes.rtk import rtk_bp
 from routes.realtime import realtime_bp
 from routes.mattermost import mattermost_bp
+from routes.templates import templates_bp
 import config
 from backend.version import get_version
 
@@ -167,6 +176,29 @@ from flask import g as _g
 # Skip rate limiting for these paths (login already has its own rate limiter)
 _RATELIMIT_SKIP_PREFIXES = ('/login', '/logout')
 
+
+def _is_direct_bash_send() -> bool:
+    """True for POST /api/agents/<id>/chat carrying a web "!" bash command for an agent with bash exec enabled."""
+    try:
+        if not request.path.rstrip('/').endswith('/chat') or not session.get('authenticated'):
+            return False
+        if request.content_type and request.content_type.startswith('multipart/form-data'):
+            if request.files:
+                return False
+            message = request.form.get('message') or ''
+        else:
+            message = (request.get_json(silent=True) or {}).get('message') or ''
+        if not isinstance(message, str) or not message.lstrip().startswith('!'):
+            return False
+        parts = request.path.strip('/').split('/')          # api / agents / <id> / chat
+        if len(parts) < 4:
+            return False
+        from models.db import db as _db
+        agent = _db.get_agent(parts[2])
+        return bool(agent and agent.get('bash_exec_enabled'))
+    except Exception:
+        return False
+
 @app.before_request
 def _api_rate_limit_before():
     """Check rate limit before processing the request."""
@@ -179,6 +211,10 @@ def _api_rate_limit_before():
     tier = classify_request(path, request.method)
     if tier is None:
         return None  # no rate limit for this path
+
+    # "!" bash-mode sends run a shell command directly (no LLM call), so they don't draw on the LLM-send budget.
+    if tier == 'chat' and _is_direct_bash_send():
+        return None
 
     # Build identifier: user ID if authenticated, else IP
     if session.get('authenticated'):
@@ -239,16 +275,27 @@ app.register_blueprint(settings_bp)
 app.register_blueprint(sessions_bp)
 app.register_blueprint(dashboard_bp)
 app.register_blueprint(models_bp)
+app.register_blueprint(decision_profiles_bp)
+app.register_blueprint(decision_playground_bp)
 app.register_blueprint(providers_bp)
 app.register_blueprint(codex_bp)
+app.register_blueprint(claude_bp)
 app.register_blueprint(health_bp)
 app.register_blueprint(workplaces_bp)
 app.register_blueprint(logs_bp)
 app.register_blueprint(safety_rules_bp)
+app.register_blueprint(decim_safety_bp)
 app.register_blueprint(update_bp)
 app.register_blueprint(rtk_bp)
 app.register_blueprint(realtime_bp)
 app.register_blueprint(mattermost_bp)
+app.register_blueprint(templates_bp)
+
+
+# Browser fallback for user agents that request the conventional root favicon path.
+@app.get('/favicon.ico')
+def favicon():
+    return redirect(url_for('static', filename='favicon/favicon.ico'), code=302)
 
 
 # ---- Backward-compatible redirect: /settings/* → /system/* ----
@@ -332,7 +379,8 @@ _is_reloader_child = _os.environ.get('WERKZEUG_RUN_MAIN') == 'true'
 # Smoke-test import (used by the updater to validate a new tree before
 # restarting): import all modules but skip channel/scheduler startup.
 _smoke_test = _os.environ.get('EVONIC_SMOKE_TEST') == '1'
-if (not _reloader_active or _is_reloader_child) and not _smoke_test:
+_testing = _os.environ.get('EVONIC_TESTING') == '1'
+if (not _reloader_active or _is_reloader_child) and not _smoke_test and not _testing:
     # Run SYSTEM.md migration eagerly (not lazily on first GET /api/agents).
     # Agents that predate the on-disk SYSTEM.md feature need their file written
     # before they start processing messages — otherwise read_file("/_self/SYSTEM.md")
@@ -396,17 +444,21 @@ if (not _reloader_active or _is_reloader_child) and not _smoke_test:
                         _log.warning("Channel %s not found, cannot send restart ready message",
                                      _channel_id)
                 elif _session_id and _agent_id:
-                    # Web chat — inject directly as system message (no LLM)
-                    # Write to SQLite DB so it appears in chat history
-                    db.add_chat_message(_session_id, 'system', 'Evonic ready!',
-                                        agent_id=_agent_id, metadata={'restart_ready': True})
-                    # Write to JSONL chatlog so it appears when polling
+                    # Web chat — inject directly as system message (no LLM).
+                    # Keep the same durable ID in history and SSE so a reconnecting
+                    # client can render and deduplicate this notification.
+                    _metadata = {'restart_ready': True}
+                    _message_id = db.add_chat_message(
+                        _session_id, 'system', 'Evonic ready!',
+                        agent_id=_agent_id, metadata=_metadata,
+                    )
+                    # Write to JSONL chatlog so it appears when polling.
                     from models.chatlog import chatlog_manager
                     _cl = chatlog_manager.get(_agent_id, _session_id)
                     _cl.append({'type': 'system', 'session_id': _session_id,
-                                'content': 'Evonic ready!',
-                                'metadata': {'restart_ready': True}})
-                    # Emit SSE event for any reconnected clients
+                                'content': 'Evonic ready!', 'metadata': _metadata,
+                                'message_id': _message_id})
+                    # Emit a renderable SSE event for any reconnected clients.
                     from backend.event_stream import event_stream
                     event_stream.emit('message_received', {
                         'agent_id': _agent_id,
@@ -414,6 +466,9 @@ if (not _reloader_active or _is_reloader_child) and not _smoke_test:
                         'external_user_id': _user_id,
                         'channel_id': None,
                         'message': 'Evonic ready!',
+                        'message_id': _message_id,
+                        'role': 'system',
+                        'metadata': _metadata,
                     })
                     _log.info("'Evonic ready!' sent via web chat (session=%s)", _session_id)
                 else:
@@ -632,7 +687,7 @@ def _close_db_connection(exc):
 
 def _csrf_exempt(path):
     """Return True if the path should skip CSRF validation."""
-    if path in ('/login', '/logout', '/setup',
+    if path in ('/login', '/logout', '/two-factor', '/setup',
                 '/api/health', '/api/connector/pair',
                 '/api/internal/skills/muktamar-agent/verify-token',
                 '/api/setup', '/api/setup/test-connection', '/api/setup/docker-status'):
@@ -721,13 +776,15 @@ def enforce_auth():
         return None  # Evonet binary download is unauthenticated (uses embedded connector_token)
     if request.path == '/ws/connector':
         return None  # Evonet connector authenticates via Bearer token, not session
+    if request.path == '/favicon.ico':
+        return None
     if request.path.startswith('/static/'):
         return None
     if request.path.startswith('/webhook'):
         return None  # Plugin webhook endpoints handle their own auth
     if request.path.startswith('/plugin/'):
         return None  # Plugin routes handle their own auth internally
-    if request.path in ('/login', '/logout'):
+    if request.path in ('/login', '/logout', '/two-factor'):
         return None
 
     # Setup endpoints handle their own auth/state validation — always allow them

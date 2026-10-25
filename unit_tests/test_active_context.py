@@ -4,6 +4,7 @@ import copy
 import json
 
 from backend.agent_runtime.active_context import (
+    _bounded_ledger,
     normalize_mode,
     project_active_context,
     validate_tool_pairs,
@@ -33,6 +34,87 @@ def _base_messages():
         {"role": "system", "content": "system"},
         {"role": "user", "content": "inspect the project"},
     ]
+
+
+def test_per_model_capacity_threshold_overrides_fixed_fallback():
+    from backend.agent_runtime.active_context import resolve_soft_token_threshold
+
+    assert resolve_soft_token_threshold(12000, 128000, 85) == 108800
+    assert resolve_soft_token_threshold(12000, "32000", "90") == 28800
+
+
+def test_unknown_or_invalid_model_capacity_uses_fixed_fallback():
+    from backend.agent_runtime.active_context import resolve_soft_token_threshold
+
+    assert resolve_soft_token_threshold(12000, None, 85) == 12000
+    assert resolve_soft_token_threshold(12000, 32000, 0) == 12000
+    assert resolve_soft_token_threshold(12000, "invalid", 85) == 12000
+
+
+def test_provider_prompt_tokens_trigger_projection_when_local_estimate_is_low():
+    """Regression for richard-8cd35a2a: provider >85% while local estimate is below."""
+    messages = _base_messages()
+    messages += _group(["old"], ["read_file"], "large output" * 200)
+    messages += _group(["frontier"], ["read_file"], "recent output")
+
+    # Qwen3.8-27B has a 160k window: 85% is 136k. The session's provider
+    # reported 145,587 prompt tokens, while the local estimate stayed below it.
+    result = project_active_context(
+        messages, mode="enforced", recent_completed_groups=1,
+        soft_token_threshold=136_000, provider_prompt_tokens=145_587,
+    )
+
+    assert result.canonical_tokens < 136_000
+    assert result.provider_prompt_tokens == 145_587
+    assert result.usage_signal == 145_587
+    assert result.trigger_source == "provider"
+    assert result.applied
+    assert result.compacted_groups == 1
+
+
+def test_local_estimate_remains_the_fallback_without_provider_usage():
+    messages = _base_messages()
+    messages += _group(["old"], ["read_file"], "large output" * 200)
+    messages += _group(["frontier"], ["read_file"], "recent output")
+
+    # Force a threshold below this test fixture's deterministic local estimate.
+    result = project_active_context(
+        messages, mode="enforced", recent_completed_groups=1,
+        soft_token_threshold=1, provider_prompt_tokens=None,
+    )
+
+    assert result.provider_prompt_tokens == 0
+    assert result.usage_signal == result.canonical_tokens
+    assert result.trigger_source == "local"
+    assert result.applied
+
+
+def test_invalid_provider_usage_degrades_to_local_estimate():
+    messages = _base_messages()
+    result = project_active_context(
+        messages, mode="shadow", soft_token_threshold=1,
+        provider_prompt_tokens="not-a-number",
+    )
+
+    assert result.provider_prompt_tokens == 0
+    assert result.trigger_source == "local"
+
+
+def test_threshold_without_eligible_groups_reports_diagnostic():
+    messages = _base_messages()
+    # This group is completed but intentionally unknown, therefore ineligible.
+    messages += _group(["unknown"], ["plugin_without_policy"], "large result" * 200)
+
+    result = project_active_context(
+        messages, mode="enforced", recent_completed_groups=0,
+        soft_token_threshold=136_000, provider_prompt_tokens=145_587,
+    )
+
+    assert not result.applied
+    assert result.no_eligible_groups
+    assert result.trigger_source == "provider"
+    assert result.completed_groups == result.retained_groups == 1
+    assert result.messages == messages
 
 
 def test_projection_is_deterministic_and_does_not_mutate_canonical_messages():
@@ -151,3 +233,83 @@ def test_synthetic_long_loop_materially_reduces_projected_growth():
     assert result.compacted_groups == 48
     assert result.projected_tokens < result.canonical_tokens * 0.25
     validate_tool_pairs(result.messages)
+
+
+def _group_with_args(call_id, name, arguments, payload="output"):
+    calls = [{
+        "id": call_id,
+        "type": "function",
+        "function": {"name": name, "arguments": json.dumps(arguments)},
+    }]
+    return [
+        {"role": "assistant", "content": "", "tool_calls": calls},
+        {"role": "tool", "tool_call_id": call_id, "content": payload},
+    ]
+
+
+def _ledger_of(messages, **kwargs):
+    result = project_active_context(messages, recent_completed_groups=1,
+                                    soft_token_threshold=0, **kwargs)
+    return next(message["content"] for message in result.messages
+                if "Active Turn Ledger" in (message.get("content") or ""))
+
+
+def test_receipt_carries_identity_args_but_not_other_keys():
+    messages = _base_messages()
+    messages += _group_with_args("old", "read_file",
+                                 {"file_path": "backend/x.py", "secret": "nope"})
+    messages += _group(["frontier"], ["read_file"], "recent")
+
+    ledger = _ledger_of(messages, receipt_max_chars=1000)
+
+    assert "read_file(backend/x.py): info" in ledger
+    assert "nope" not in ledger
+
+
+def test_unlisted_tool_receipt_carries_no_arguments():
+    messages = _base_messages()
+    messages += _group_with_args("old", "calculator",
+                                 {"expression": "2+2", "file_path": "leak.py"})
+    messages += _group(["frontier"], ["read_file"], "recent")
+
+    ledger = _ledger_of(messages, receipt_max_chars=1000)
+
+    # calculator is absent from _RECEIPT_IDENTITY_ARGS, so no argument may surface —
+    # not even a key that is allowlisted for some other tool.
+    assert "calculator: info" in ledger
+    assert "leak.py" not in ledger
+    assert "2+2" not in ledger
+
+
+def test_mutation_and_malformed_arguments_degrade_safely():
+    messages = _base_messages()
+    messages += _group_with_args("mut", "write_file", {"file_path": "out.txt"})
+    messages += _group_with_args("bad", "read_file", "not-json-at-all")
+    messages += _group(["frontier"], ["read_file"], "recent")
+
+    ledger = _ledger_of(messages, receipt_max_chars=1000)
+
+    assert "write_file(out.txt): mut" in ledger
+    assert "read_file: info" in ledger  # unparseable arguments fall back to bare label
+
+
+def test_receipt_density_does_not_regress_against_the_previous_format():
+    """Identity arguments must not cost coverage (regression: task 748 / variant B).
+
+    An earlier attempt appended `(file_path=...)` while keeping the unused `ref:` digest,
+    which pushed the line to 95 chars and dropped 26 groups out of a 120-group ledger.
+    """
+    messages = _base_messages()
+    for index in range(120):
+        messages += _group_with_args(f"c{index}", "read_file",
+                                     {"file_path": f"backend/agent_runtime/module_{index}.py"})
+    messages += _group(["frontier"], ["read_file"], "recent")
+
+    ledger = _ledger_of(messages, receipt_max_chars=4000)
+    previous_format = _bounded_ledger(
+        [f"- #{i + 1} read_file: success/informational; ref:{'a' * 12}" for i in range(120)],
+        4000,
+    )
+
+    assert ledger.count("\n- #") >= previous_format.count("\n- #")
+    assert "module_0.py" in ledger
